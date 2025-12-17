@@ -34,6 +34,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
 from kiro_gateway.config import (
@@ -241,6 +242,18 @@ app = FastAPI(
     description=APP_DESCRIPTION,
     version=APP_VERSION,
     lifespan=lifespan
+)
+
+
+# --- CORS Middleware ---
+# Разрешаем CORS для всех источников, чтобы поддерживать браузерные клиенты
+# и инструменты, которые отправляют preflight OPTIONS запросы
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Разрешаем все источники
+    allow_credentials=True,
+    allow_methods=["*"],  # Разрешаем все методы (GET, POST, OPTIONS, etc.)
+    allow_headers=["*"],  # Разрешаем все заголовки
 )
 
 

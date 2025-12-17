@@ -289,17 +289,33 @@ kiro-openai-gateway/
 Debug logging is **disabled by default**. To enable, add to your `.env`:
 
 ```env
-DEBUG_LAST_REQUEST=true
+# Debug logging mode:
+# - off: disabled (default)
+# - errors: save logs only for failed requests (4xx, 5xx) - recommended for troubleshooting
+# - all: save logs for every request (overwrites on each request)
+DEBUG_MODE=errors
 ```
+
+### Debug Modes
+
+| Mode | Description | Use Case |
+|------|-------------|----------|
+| `off` | Disabled (default) | Production |
+| `errors` | Save logs only for failed requests (4xx, 5xx) | **Recommended for troubleshooting** |
+| `all` | Save logs for every request | Development/debugging |
+
+### Debug Files
 
 When enabled, requests are logged to the `debug_logs/` folder:
 
 | File | Description |
 |------|-------------|
-| `request_body.json` | Incoming request from client |
-| `kiro_request_body.json` | Request to Kiro API |
+| `request_body.json` | Incoming request from client (OpenAI format) |
+| `kiro_request_body.json` | Request sent to Kiro API |
 | `response_stream_raw.txt` | Raw stream from Kiro |
-| `response_stream_modified.txt` | Transformed stream |
+| `response_stream_modified.txt` | Transformed stream (OpenAI format) |
+| `app_logs.txt` | Application logs for the request |
+| `error_info.json` | Error details (only on errors) |
 
 ---
 

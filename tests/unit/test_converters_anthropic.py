@@ -1099,7 +1099,7 @@ class TestAnthropicToKiro:
         )
         
         print("Action: Converting to Kiro payload...")
-        with patch('kiro.converters_anthropic.get_internal_model_id', return_value='CLAUDE_SONNET_4_5_20250929_V1_0'):
+        with patch('kiro.converters_anthropic.get_model_id_for_kiro', return_value='claude-sonnet-4.5'):
             with patch('kiro.converters_core.FAKE_REASONING_ENABLED', False):
                 result = anthropic_to_kiro(request, "conv-123", "arn:aws:test")
         
@@ -1124,7 +1124,7 @@ class TestAnthropicToKiro:
         )
         
         print("Action: Converting to Kiro payload...")
-        with patch('kiro.converters_anthropic.get_internal_model_id', return_value='CLAUDE_SONNET_4_5_20250929_V1_0'):
+        with patch('kiro.converters_anthropic.get_model_id_for_kiro', return_value='claude-sonnet-4.5'):
             with patch('kiro.converters_core.FAKE_REASONING_ENABLED', False):
                 result = anthropic_to_kiro(request, "conv-123", "arn:aws:test")
         
@@ -1153,7 +1153,7 @@ class TestAnthropicToKiro:
         )
         
         print("Action: Converting to Kiro payload...")
-        with patch('kiro.converters_anthropic.get_internal_model_id', return_value='CLAUDE_SONNET_4_5_20250929_V1_0'):
+        with patch('kiro.converters_anthropic.get_model_id_for_kiro', return_value='claude-sonnet-4.5'):
             with patch('kiro.converters_core.FAKE_REASONING_ENABLED', False):
                 result = anthropic_to_kiro(request, "conv-123", "arn:aws:test")
         
@@ -1181,7 +1181,7 @@ class TestAnthropicToKiro:
         )
         
         print("Action: Converting to Kiro payload...")
-        with patch('kiro.converters_anthropic.get_internal_model_id', return_value='CLAUDE_SONNET_4_5_20250929_V1_0'):
+        with patch('kiro.converters_anthropic.get_model_id_for_kiro', return_value='claude-sonnet-4.5'):
             with patch('kiro.converters_core.FAKE_REASONING_ENABLED', False):
                 result = anthropic_to_kiro(request, "conv-123", "arn:aws:test")
         
@@ -1228,7 +1228,7 @@ class TestAnthropicToKiro:
         )
         
         print("Action: Converting to Kiro payload...")
-        with patch('kiro.converters_anthropic.get_internal_model_id', return_value='CLAUDE_SONNET_4_5_20250929_V1_0'):
+        with patch('kiro.converters_anthropic.get_model_id_for_kiro', return_value='claude-sonnet-4.5'):
             with patch('kiro.converters_core.FAKE_REASONING_ENABLED', False):
                 result = anthropic_to_kiro(request, "conv-123", "arn:aws:test")
         
@@ -1280,7 +1280,7 @@ class TestAnthropicToKiro:
         )
         
         print("Action: Converting to Kiro payload with fake reasoning...")
-        with patch('kiro.converters_anthropic.get_internal_model_id', return_value='CLAUDE_SONNET_4_5_20250929_V1_0'):
+        with patch('kiro.converters_anthropic.get_model_id_for_kiro', return_value='claude-sonnet-4.5'):
             with patch('kiro.converters_core.FAKE_REASONING_ENABLED', True):
                 with patch('kiro.converters_core.FAKE_REASONING_MAX_TOKENS', 4000):
                     result = anthropic_to_kiro(request, "conv-123", "arn:aws:test")
@@ -1321,7 +1321,7 @@ class TestAnthropicToKiro:
         )
         
         print("Action: Converting to Kiro payload...")
-        with patch('kiro.converters_anthropic.get_internal_model_id', return_value='CLAUDE_SONNET_4_5_20250929_V1_0'):
+        with patch('kiro.converters_anthropic.get_model_id_for_kiro', return_value='claude-sonnet-4.5'):
             with patch('kiro.converters_core.FAKE_REASONING_ENABLED', True):
                 with patch('kiro.converters_core.FAKE_REASONING_MAX_TOKENS', 4000):
                     result = anthropic_to_kiro(request, "conv-123", "arn:aws:test")

@@ -160,47 +160,26 @@ MAX_RETRIES: int = 3
 BASE_RETRY_DELAY: float = 1.0
 
 # ==================================================================================================
-# Model Mapping
+# Hidden Models Configuration
 # ==================================================================================================
 
-# External model names (OpenAI-compatible) -> internal Kiro IDs
-# Clients use external names, and we convert them to internal ones
-MODEL_MAPPING: Dict[str, str] = {
-    # Claude Opus 4.5 - top-tier model
-    "claude-opus-4-5": "claude-opus-4.5",
-    "claude-opus-4-5-20251101": "claude-opus-4.5",
+# Hidden models - not returned by Kiro /ListAvailableModels API but still functional.
+# These ARE shown in our /v1/models endpoint!
+# Use dot format for consistency with API models.
+#
+# Format: "display_name" → "internal_kiro_id"
+# Display names use dots (e.g., "claude-3.7-sonnet") for consistency with Kiro API.
+#
+# Why "hidden"? These models work but are not advertised by Kiro's /ListAvailableModels.
+# We expose them to our users because they're useful.
+HIDDEN_MODELS: Dict[str, str] = {
+    # Claude 3.7 Sonnet - legacy flagship model, still works!
+    # Hidden in Kiro API but functional. Great for users who prefer it.
+    "claude-3.7-sonnet": "CLAUDE_3_7_SONNET_20250219_V1_0",
     
-    # Claude Haiku 4.5 - fast model
-    "claude-haiku-4-5": "claude-haiku-4.5",
-    "claude-haiku-4.5": "claude-haiku-4.5",  # Direct passthrough
-    
-    # Claude Sonnet 4.5 - enhanced model
-    "claude-sonnet-4-5": "CLAUDE_SONNET_4_5_20250929_V1_0",
-    "claude-sonnet-4-5-20250929": "CLAUDE_SONNET_4_5_20250929_V1_0",
-    
-    # Claude Sonnet 4 - balanced model
-    "claude-sonnet-4": "CLAUDE_SONNET_4_20250514_V1_0",
-    "claude-sonnet-4-20250514": "CLAUDE_SONNET_4_20250514_V1_0",
-    
-    # Claude 3.7 Sonnet - legacy model
-    "claude-3-7-sonnet-20250219": "CLAUDE_3_7_SONNET_20250219_V1_0",
-    
-    # Aliases for convenience
-    "auto": "claude-sonnet-4.5",
+    # Add other hidden/experimental models here as discovered.
+    # Example: "claude-secret-model": "INTERNAL_SECRET_MODEL_ID",
 }
-
-# List of available models for /v1/models endpoint
-# These models will be displayed to clients as available
-AVAILABLE_MODELS: List[str] = [
-    "claude-opus-4-5",
-    "claude-opus-4-5-20251101",
-    "claude-haiku-4-5",
-    "claude-sonnet-4-5",
-    "claude-sonnet-4-5-20250929",
-    "claude-sonnet-4",
-    "claude-sonnet-4-20250514",
-    "claude-3-7-sonnet-20250219",
-]
 
 # ==================================================================================================
 # Model Cache Settings
@@ -428,15 +407,3 @@ def get_kiro_q_host(region: str) -> str:
     """Return Q API host for the specified region."""
     return KIRO_Q_HOST_TEMPLATE.format(region=region)
 
-
-def get_internal_model_id(external_model: str) -> str:
-    """
-    Convert external model name to internal Kiro ID.
-    
-    Args:
-        external_model: External model name (e.g., "claude-sonnet-4-5")
-    
-    Returns:
-        Internal model ID for Kiro API
-    """
-    return MODEL_MAPPING.get(external_model, external_model)

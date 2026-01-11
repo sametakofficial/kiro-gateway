@@ -48,13 +48,13 @@ from kiro.auth import KiroAuthManager
 from kiro.cache import ModelInfoCache
 from kiro.http_client import KiroHttpClient
 from kiro.routes_openai import router
+from kiro.model_resolver import ModelResolver, normalize_model_name, get_model_id_for_kiro
 
 # Configuration
 from kiro.config import (
     PROXY_API_KEY,
     REGION,
-    MODEL_MAPPING,
-    AVAILABLE_MODELS,
+    HIDDEN_MODELS,
     APP_VERSION,
 )
 
@@ -99,14 +99,18 @@ __all__ = [
     "KiroAuthManager",
     "ModelInfoCache",
     "KiroHttpClient",
+    "ModelResolver",
     "router",
     
     # Configuration
     "PROXY_API_KEY",
     "REGION",
-    "MODEL_MAPPING",
-    "AVAILABLE_MODELS",
+    "HIDDEN_MODELS",
     "APP_VERSION",
+    
+    # Model resolution
+    "normalize_model_name",
+    "get_model_id_for_kiro",
     
     # Models
     "ChatCompletionRequest",

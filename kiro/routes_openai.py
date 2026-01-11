@@ -29,7 +29,6 @@ Contains all API endpoints:
 import json
 from datetime import datetime, timezone
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, Security
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import APIKeyHeader
@@ -37,7 +36,6 @@ from loguru import logger
 
 from kiro.config import (
     PROXY_API_KEY,
-    AVAILABLE_MODELS,
     APP_VERSION,
 )
 from kiro.models_openai import (
@@ -47,10 +45,11 @@ from kiro.models_openai import (
 )
 from kiro.auth import KiroAuthManager, AuthType
 from kiro.cache import ModelInfoCache
+from kiro.model_resolver import ModelResolver
 from kiro.converters_openai import build_kiro_payload
 from kiro.streaming_openai import stream_kiro_to_openai, collect_stream_response, stream_with_first_token_retry
 from kiro.http_client import KiroHttpClient
-from kiro.utils import get_kiro_headers, generate_conversation_id
+from kiro.utils import generate_conversation_id
 
 # Import debug_logger
 try:
@@ -117,61 +116,35 @@ async def health():
         "version": APP_VERSION
     }
 
-
 @router.get("/v1/models", response_model=ModelList, dependencies=[Depends(verify_api_key)])
 async def get_models(request: Request):
     """
     Return list of available models.
     
-    Uses static model list with ability to update from API.
-    Caches results to reduce API load.
+    Models are loaded at startup (blocking) and cached.
+    This endpoint returns the cached list.
     
     Args:
         request: FastAPI Request for accessing app.state
     
     Returns:
-        ModelList with available models
+        ModelList with available models in consistent format (with dots)
     """
     logger.info("Request to /v1/models")
     
-    auth_manager: KiroAuthManager = request.app.state.auth_manager
-    model_cache: ModelInfoCache = request.app.state.model_cache
+    model_resolver: ModelResolver = request.app.state.model_resolver
     
-    # Try to get models from API if cache is empty or stale
-    if model_cache.is_empty() or model_cache.is_stale():
-        try:
-            token = await auth_manager.get_access_token()
-            headers = get_kiro_headers(auth_manager, token)
-            
-            # Build params - profileArn is only needed for Kiro Desktop auth
-            # AWS SSO OIDC (Builder ID) users don't need profileArn and it causes 403 if sent
-            params = {"origin": "AI_EDITOR"}
-            if auth_manager.auth_type == AuthType.KIRO_DESKTOP and auth_manager.profile_arn:
-                params["profileArn"] = auth_manager.profile_arn
-            
-            async with httpx.AsyncClient(timeout=30) as client:
-                response = await client.get(
-                    f"{auth_manager.q_host}/ListAvailableModels",
-                    headers=headers,
-                    params=params
-                )
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    models_list = data.get("models", [])
-                    await model_cache.update(models_list)
-                    logger.info(f"Received {len(models_list)} models from API")
-        except Exception as e:
-            logger.warning(f"Failed to fetch models from API: {e}")
+    # Get all available models from resolver (cache + hidden models)
+    available_model_ids = model_resolver.get_available_models()
     
-    # Return static model list
+    # Build OpenAI-compatible model list
     openai_models = [
         OpenAIModel(
             id=model_id,
             owned_by="anthropic",
             description="Claude model via Kiro API"
         )
-        for model_id in AVAILABLE_MODELS
+        for model_id in available_model_ids
     ]
     
     return ModelList(data=openai_models)
@@ -212,10 +185,6 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
             debug_logger.log_request_body(request_body)
     except Exception as e:
         logger.warning(f"Failed to log request body: {e}")
-    
-    # Lazy model cache population
-    if model_cache.is_empty():
-        logger.debug("Model cache is empty, skipping forced population")
     
     # Generate conversation ID
     conversation_id = generate_conversation_id()

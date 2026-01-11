@@ -22,7 +22,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from kiro.routes_openai import verify_api_key, router
-from kiro.config import PROXY_API_KEY, APP_VERSION, AVAILABLE_MODELS
+from kiro.config import PROXY_API_KEY, APP_VERSION
 
 
 # =============================================================================
@@ -337,9 +337,9 @@ class TestModelsEndpoint:
         model_ids = [m["id"] for m in response.json()["data"]]
         print(f"Model IDs: {model_ids}")
         
-        for expected_model in AVAILABLE_MODELS:
-            print(f"Checking model {expected_model} is present...")
-            assert expected_model in model_ids, f"Model {expected_model} not found"
+        # At minimum, hidden models should be present
+        # (even if Kiro API cache is empty)
+        assert len(model_ids) >= 1, "Expected at least one model (hidden models)"
     
     def test_models_format_is_openai_compatible(self, test_client, valid_proxy_api_key):
         """

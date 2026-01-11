@@ -590,10 +590,14 @@ class TestBuildKiroPayload:
         current_content = result["conversationState"]["currentMessage"]["userInputMessage"]["content"]
         assert current_content == "Continue"
     
-    def test_maps_model_id_correctly(self):
+    def test_normalizes_model_id_correctly(self):
         """
-        What it does: Verifies mapping of external model ID to internal.
-        Purpose: Ensure MODEL_MAPPING is applied.
+        What it does: Verifies normalization of external model ID to Kiro format.
+        Purpose: Ensure model name normalization is applied (dashes→dots, strip dates).
+        
+        Note: The new Dynamic Model Resolution System normalizes model names
+        (e.g., claude-sonnet-4-5 → claude-sonnet-4.5) instead of mapping to
+        internal IDs. Kiro API accepts the normalized format directly.
         """
         print("Setup: Request with external model ID...")
         request = ChatCompletionRequest(
@@ -606,8 +610,9 @@ class TestBuildKiroPayload:
         
         print(f"Result: {result}")
         model_id = result["conversationState"]["currentMessage"]["userInputMessage"]["modelId"]
-        # claude-sonnet-4-5 should map to CLAUDE_SONNET_4_5_20250929_V1_0
-        assert model_id == "CLAUDE_SONNET_4_5_20250929_V1_0"
+        # claude-sonnet-4-5 should normalize to claude-sonnet-4.5 (dashes→dots)
+        print(f"Comparing model_id: Expected 'claude-sonnet-4.5', Got '{model_id}'")
+        assert model_id == "claude-sonnet-4.5"
     
     def test_includes_tools_in_context(self):
         """

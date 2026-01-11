@@ -228,16 +228,18 @@ If you need to manually extract the refresh token (e.g., for debugging), you can
 
 ### Available Models
 
-| Model | Description |
-|-------|-------------|
-| `claude-opus-4-5` | Top-tier model |
-| `claude-opus-4-5-20251101` | Top-tier model (versioned) |
-| `claude-sonnet-4-5` | Enhanced model |
-| `claude-sonnet-4-5-20250929` | Enhanced model (versioned) |
-| `claude-sonnet-4` | Balanced model |
-| `claude-sonnet-4-20250514` | Balanced model (versioned) |
-| `claude-haiku-4-5` | Fast model |
-| `claude-3-7-sonnet-20250219` | Legacy model |
+Kiro Gateway supports the following Claude models:
+
+**🚀 Latest Models**
+- **Claude Opus 4.5** — Most powerful model, best for complex reasoning and analysis
+- **Claude Sonnet 4.5** — Balanced model, great for general-purpose tasks
+- **Claude Haiku 4.5** — Fast and lightweight, perfect for quick responses
+
+**📦 Additional Models**
+- **Claude Sonnet 4** — Previous generation, still powerful and reliable
+- **Claude 3.7 Sonnet** — Legacy model, available for compatibility
+
+> **Note:** The gateway automatically handles model name variations. You can use either the base model name (e.g., `claude-sonnet-4-5`) or versioned variants (e.g., `claude-sonnet-4-5-20250929`). The gateway will normalize them automatically.
 
 ---
 

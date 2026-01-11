@@ -33,7 +33,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from loguru import logger
 
-from kiro.config import get_internal_model_id
+from kiro.config import HIDDEN_MODELS
+from kiro.model_resolver import get_model_id_for_kiro
 from kiro.models_openai import ChatMessage, ChatCompletionRequest, Tool
 
 # Import from core - reuse shared logic
@@ -261,8 +262,9 @@ def build_kiro_payload(
     # Convert tools to unified format
     unified_tools = convert_openai_tools_to_unified(request_data.tools)
     
-    # Get internal model ID
-    model_id = get_internal_model_id(request_data.model)
+    # Get model ID for Kiro API (normalizes + resolves hidden models)
+    # Pass-through principle: we normalize and send to Kiro, Kiro decides if valid
+    model_id = get_model_id_for_kiro(request_data.model, HIDDEN_MODELS)
     
     logger.debug(
         f"Converting OpenAI request: model={request_data.model} -> {model_id}, "

@@ -67,11 +67,13 @@ from kiro.config import (
     DEFAULT_SERVER_HOST,
     DEFAULT_SERVER_PORT,
     STREAMING_READ_TIMEOUT,
+    HIDDEN_MODELS,
     _warn_deprecated_debug_setting,
     _warn_timeout_configuration,
 )
 from kiro.auth import KiroAuthManager
 from kiro.cache import ModelInfoCache
+from kiro.model_resolver import ModelResolver
 from kiro.routes_openai import router as openai_router
 from kiro.routes_anthropic import router as anthropic_router
 from kiro.exceptions import validation_exception_handler
@@ -317,6 +319,58 @@ async def lifespan(app: FastAPI):
     
     # Create model cache
     app.state.model_cache = ModelInfoCache()
+    
+    # === BLOCKING: Load models from Kiro API at startup ===
+    # This ensures the cache is populated BEFORE accepting any requests.
+    # No race conditions - requests only start after yield.
+    logger.info("Loading models from Kiro API...")
+    try:
+        token = await app.state.auth_manager.get_access_token()
+        from kiro.utils import get_kiro_headers
+        from kiro.auth import AuthType
+        headers = get_kiro_headers(app.state.auth_manager, token)
+        
+        # Build params - profileArn is only needed for Kiro Desktop auth
+        params = {"origin": "AI_EDITOR"}
+        if app.state.auth_manager.auth_type == AuthType.KIRO_DESKTOP and app.state.auth_manager.profile_arn:
+            params["profileArn"] = app.state.auth_manager.profile_arn
+        
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.get(
+                f"{app.state.auth_manager.q_host}/ListAvailableModels",
+                headers=headers,
+                params=params
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                models_list = data.get("models", [])
+                await app.state.model_cache.update(models_list)
+                logger.debug(f"Loaded {len(models_list)} models from Kiro API: {[m.get('modelId') for m in models_list]}")
+            else:
+                logger.warning(f"Failed to load models from API: HTTP {response.status_code}")
+                logger.warning("Server will start with hidden models only")
+    except Exception as e:
+        logger.warning(f"Failed to fetch models from Kiro API: {e}")
+        logger.warning("Server will start with hidden models only (fallback mode)")
+    
+    # Add hidden models to cache (they appear in /v1/models but not in Kiro API)
+    for display_name, internal_id in HIDDEN_MODELS.items():
+        app.state.model_cache.add_hidden_model(display_name, internal_id)
+    
+    if HIDDEN_MODELS:
+        logger.debug(f"Added {len(HIDDEN_MODELS)} hidden models to cache")
+    
+    # Log final cache state
+    all_models = app.state.model_cache.get_all_model_ids()
+    logger.info(f"Model cache ready: {len(all_models)} models total")
+    
+    # Create model resolver (uses cache + hidden models for resolution)
+    app.state.model_resolver = ModelResolver(
+        cache=app.state.model_cache,
+        hidden_models=HIDDEN_MODELS
+    )
+    logger.info("Model resolver initialized")
     
     yield
     

@@ -73,13 +73,15 @@ tests/
 ├── conftest.py                      # Shared fixtures and utilities
 ├── unit/                            # Unit tests for individual components
 │   ├── test_auth_manager.py        # KiroAuthManager tests
-│   ├── test_cache.py               # ModelInfoCache tests
+│   ├── test_cache.py               # ModelInfoCache tests (is_valid_model, add_hidden_model)
 │   ├── test_config.py              # Configuration tests (SERVER_HOST, SERVER_PORT, LOG_LEVEL, etc.)
 │   ├── test_converters_anthropic.py # Anthropic Messages API → Kiro converter tests
 │   ├── test_converters_core.py     # Shared conversion logic tests (UnifiedMessage, merging, etc.)
 │   ├── test_converters_openai.py   # OpenAI Chat API → Kiro converter tests
 │   ├── test_debug_logger.py        # DebugLogger tests (off/errors/all modes)
+│   ├── test_http_client.py         # KiroHttpClient tests
 │   ├── test_main_cli.py            # CLI argument parsing tests (--host, --port)
+│   ├── test_model_resolver.py      # Dynamic Model Resolution System tests
 │   ├── test_models_anthropic.py    # Anthropic Pydantic models tests (all content blocks, tools, streaming)
 │   ├── test_models_openai.py       # OpenAI Pydantic models tests (messages, tools, responses, streaming)
 │   ├── test_parsers.py             # AwsEventStreamParser tests
@@ -89,8 +91,7 @@ tests/
 │   ├── test_streaming_core.py      # Shared streaming logic tests
 │   ├── test_streaming_openai.py    # OpenAI streaming response tests
 │   ├── test_thinking_parser.py     # ThinkingParser tests (FSM for thinking blocks)
-│   ├── test_tokenizer.py           # Tokenizer tests (tiktoken)
-│   └── test_http_client.py         # KiroHttpClient tests
+│   └── test_tokenizer.py           # Tokenizer tests (tiktoken)
 ├── integration/                     # Integration tests for full flow
 │   └── test_full_flow.py           # End-to-end tests
 └── README.md                        # This file

@@ -89,6 +89,43 @@ class ModelInfoCache:
         """
         return self._cache.get(model_id)
     
+    def is_valid_model(self, model_id: str) -> bool:
+        """
+        Check if model exists in dynamic cache.
+        
+        Used by ModelResolver to verify if a model is available.
+        
+        Args:
+            model_id: Model ID to check
+        
+        Returns:
+            True if model exists in cache, False otherwise
+        """
+        return model_id in self._cache
+    
+    def add_hidden_model(self, display_name: str, internal_id: str) -> None:
+        """
+        Add a hidden model to the cache.
+        
+        Hidden models are not returned by Kiro /ListAvailableModels API
+        but are still functional. They are added to the cache so they
+        appear in our /v1/models endpoint.
+        
+        Args:
+            display_name: Model name to display (e.g., "claude-3.7-sonnet")
+            internal_id: Internal Kiro ID (e.g., "CLAUDE_3_7_SONNET_20250219_V1_0")
+        """
+        if display_name not in self._cache:
+            self._cache[display_name] = {
+                "modelId": display_name,
+                "modelName": display_name,
+                "description": f"Hidden model (internal: {internal_id})",
+                "tokenLimits": {"maxInputTokens": DEFAULT_MAX_INPUT_TOKENS},
+                "_internal_id": internal_id,  # Store internal ID for reference
+                "_is_hidden": True,  # Mark as hidden model
+            }
+            logger.debug(f"Added hidden model: {display_name} → {internal_id}")
+    
     def get_max_input_tokens(self, model_id: str) -> int:
         """
         Returns maxInputTokens for the model.

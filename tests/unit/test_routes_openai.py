@@ -876,3 +876,103 @@ class TestRouterIntegration:
                 assert "POST" in route.methods
                 return
         pytest.fail("Chat completions endpoint not found")
+
+
+# =============================================================================
+# Tests for HTTP client selection (issue #54)
+# =============================================================================
+
+class TestHTTPClientSelection:
+    """
+    Tests for HTTP client selection in routes (issue #54).
+    
+    Verifies that streaming requests use per-request clients to avoid CLOSE_WAIT leak
+    when network interface changes (VPN disconnect/reconnect), while non-streaming
+    requests use shared client for connection pooling.
+    """
+    
+    @patch('kiro.routes_openai.KiroHttpClient')
+    def test_streaming_uses_per_request_client(
+        self,
+        mock_kiro_http_client_class,
+        test_client,
+        valid_proxy_api_key
+    ):
+        """
+        What it does: Verifies streaming requests create per-request HTTP client.
+        Purpose: Prevent CLOSE_WAIT leak on VPN disconnect (issue #54).
+        """
+        print("\n--- Test: Streaming uses per-request client ---")
+        
+        # Setup mock
+        mock_client_instance = AsyncMock()
+        mock_client_instance.request_with_retry = AsyncMock(
+            side_effect=Exception("Network blocked")
+        )
+        mock_client_instance.close = AsyncMock()
+        mock_kiro_http_client_class.return_value = mock_client_instance
+        
+        print("Action: POST with stream=true...")
+        try:
+            test_client.post(
+                "/v1/chat/completions",
+                headers={"Authorization": f"Bearer {valid_proxy_api_key}"},
+                json={
+                    "model": "claude-sonnet-4-5",
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    "stream": True
+                }
+            )
+        except Exception:
+            pass
+        
+        print("Checking: KiroHttpClient(shared_client=None)...")
+        assert mock_kiro_http_client_class.called
+        call_args = mock_kiro_http_client_class.call_args
+        print(f"Call args: {call_args}")
+        assert call_args[1]['shared_client'] is None, \
+            "Streaming should use per-request client"
+        print("✅ Streaming correctly uses per-request client")
+    
+    @patch('kiro.routes_openai.KiroHttpClient')
+    def test_non_streaming_uses_shared_client(
+        self,
+        mock_kiro_http_client_class,
+        test_client,
+        valid_proxy_api_key
+    ):
+        """
+        What it does: Verifies non-streaming requests use shared HTTP client.
+        Purpose: Ensure connection pooling for non-streaming requests.
+        """
+        print("\n--- Test: Non-streaming uses shared client ---")
+        
+        # Setup mock
+        mock_client_instance = AsyncMock()
+        mock_client_instance.request_with_retry = AsyncMock(
+            side_effect=Exception("Network blocked")
+        )
+        mock_client_instance.close = AsyncMock()
+        mock_kiro_http_client_class.return_value = mock_client_instance
+        
+        print("Action: POST with stream=false...")
+        try:
+            test_client.post(
+                "/v1/chat/completions",
+                headers={"Authorization": f"Bearer {valid_proxy_api_key}"},
+                json={
+                    "model": "claude-sonnet-4-5",
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    "stream": False
+                }
+            )
+        except Exception:
+            pass
+        
+        print("Checking: KiroHttpClient(shared_client=app.state.http_client)...")
+        assert mock_kiro_http_client_class.called
+        call_args = mock_kiro_http_client_class.call_args
+        print(f"Call args: {call_args}")
+        assert call_args[1]['shared_client'] is not None, \
+            "Non-streaming should use shared client"
+        print("✅ Non-streaming correctly uses shared client")

@@ -178,6 +178,110 @@ class TestToolDescriptionMaxLengthConfig:
             assert config_module.TOOL_DESCRIPTION_MAX_LENGTH == 0
 
 
+class TestTimeoutConfigurationWarning:
+    """Tests for _warn_timeout_configuration() function."""
+    
+    def test_no_warning_when_first_token_less_than_streaming(self, capsys):
+        """
+        What it does: Verifies that warning is NOT shown with correct configuration.
+        Purpose: Ensure that no warning when FIRST_TOKEN_TIMEOUT < STREAMING_READ_TIMEOUT.
+        """
+        print("Setup: FIRST_TOKEN_TIMEOUT=15, STREAMING_READ_TIMEOUT=300...")
+        
+        with patch.dict(os.environ, {
+            "FIRST_TOKEN_TIMEOUT": "15",
+            "STREAMING_READ_TIMEOUT": "300"
+        }):
+            import importlib
+            import kiro.config as config_module
+            importlib.reload(config_module)
+            
+            # Call the warning function
+            config_module._warn_timeout_configuration()
+            
+            captured = capsys.readouterr()
+            print(f"Captured stderr: {captured.err}")
+            
+            # Warning should NOT be shown
+            assert "WARNING" not in captured.err
+            assert "Suboptimal timeout configuration" not in captured.err
+    
+    def test_warning_when_first_token_equals_streaming(self, capsys):
+        """
+        What it does: Verifies that warning is shown when timeouts are equal.
+        Purpose: Ensure that warning when FIRST_TOKEN_TIMEOUT == STREAMING_READ_TIMEOUT.
+        """
+        print("Setup: FIRST_TOKEN_TIMEOUT=300, STREAMING_READ_TIMEOUT=300...")
+        
+        with patch.dict(os.environ, {
+            "FIRST_TOKEN_TIMEOUT": "300",
+            "STREAMING_READ_TIMEOUT": "300"
+        }):
+            import importlib
+            import kiro.config as config_module
+            importlib.reload(config_module)
+            
+            # Call the warning function
+            config_module._warn_timeout_configuration()
+            
+            captured = capsys.readouterr()
+            print(f"Captured stderr: {captured.err}")
+            
+            # Warning SHOULD be shown
+            assert "WARNING" in captured.err or "Suboptimal timeout configuration" in captured.err
+    
+    def test_warning_when_first_token_greater_than_streaming(self, capsys):
+        """
+        What it does: Verifies that warning is shown when FIRST_TOKEN > STREAMING.
+        Purpose: Ensure that warning when FIRST_TOKEN_TIMEOUT > STREAMING_READ_TIMEOUT.
+        """
+        print("Setup: FIRST_TOKEN_TIMEOUT=500, STREAMING_READ_TIMEOUT=300...")
+        
+        with patch.dict(os.environ, {
+            "FIRST_TOKEN_TIMEOUT": "500",
+            "STREAMING_READ_TIMEOUT": "300"
+        }):
+            import importlib
+            import kiro.config as config_module
+            importlib.reload(config_module)
+            
+            # Call the warning function
+            config_module._warn_timeout_configuration()
+            
+            captured = capsys.readouterr()
+            print(f"Captured stderr: {captured.err}")
+            
+            # Warning SHOULD be shown
+            assert "WARNING" in captured.err or "Suboptimal timeout configuration" in captured.err
+            # Verify that timeout values are mentioned in warning
+            assert "500" in captured.err
+            assert "300" in captured.err
+    
+    def test_warning_contains_recommendation(self, capsys):
+        """
+        What it does: Verifies that warning contains a recommendation.
+        Purpose: Ensure that user receives useful information.
+        """
+        print("Setup: FIRST_TOKEN_TIMEOUT=400, STREAMING_READ_TIMEOUT=300...")
+        
+        with patch.dict(os.environ, {
+            "FIRST_TOKEN_TIMEOUT": "400",
+            "STREAMING_READ_TIMEOUT": "300"
+        }):
+            import importlib
+            import kiro.config as config_module
+            importlib.reload(config_module)
+            
+            # Call the warning function
+            config_module._warn_timeout_configuration()
+            
+            captured = capsys.readouterr()
+            print(f"Captured stderr: {captured.err}")
+            
+            # Warning should contain recommendation
+            assert "Recommendation" in captured.err or "LESS than" in captured.err
+
+
 class TestAwsSsoOidcUrlConfig:
     """Tests for AWS SSO OIDC URL configuration."""
     

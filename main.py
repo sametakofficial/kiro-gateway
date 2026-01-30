@@ -73,6 +73,7 @@ from kiro.config import (
     HIDDEN_FROM_LIST,
     FALLBACK_MODELS,
     VPN_PROXY_URL,
+    _warn_timeout_configuration,
 )
 from kiro.auth import KiroAuthManager
 from kiro.cache import ModelInfoCache
@@ -626,6 +627,9 @@ if __name__ == "__main__":
     
     # Run configuration validation before starting server
     validate_configuration()
+    
+    # Warn about suboptimal timeout configuration
+    _warn_timeout_configuration()
     
     # Parse CLI arguments
     args = parse_cli_args()

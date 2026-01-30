@@ -360,6 +360,38 @@ else:
 # Directory for debug log files
 DEBUG_DIR: str = os.getenv("DEBUG_DIR", "debug_logs")
 
+
+def _warn_timeout_configuration():
+    """
+    Print warning if timeout configuration is suboptimal.
+    Called at application startup.
+    
+    FIRST_TOKEN_TIMEOUT should be less than STREAMING_READ_TIMEOUT:
+    - FIRST_TOKEN_TIMEOUT: time to wait for model to START responding
+    - STREAMING_READ_TIMEOUT: time to wait BETWEEN chunks during streaming
+    """
+    if FIRST_TOKEN_TIMEOUT >= STREAMING_READ_TIMEOUT:
+        import sys
+        YELLOW = "\033[93m"
+        RESET = "\033[0m"
+        
+        warning_text = f"""
+{YELLOW}⚠️  WARNING: Suboptimal timeout configuration detected.
+    
+    FIRST_TOKEN_TIMEOUT ({FIRST_TOKEN_TIMEOUT}s) >= STREAMING_READ_TIMEOUT ({STREAMING_READ_TIMEOUT}s)
+    
+    These timeouts serve different purposes:
+      - FIRST_TOKEN_TIMEOUT: time to wait for model to START responding (default: 15s)
+      - STREAMING_READ_TIMEOUT: time to wait BETWEEN chunks during streaming (default: 300s)
+    
+    Recommendation: FIRST_TOKEN_TIMEOUT should be LESS than STREAMING_READ_TIMEOUT.
+    
+    Example configuration:
+      FIRST_TOKEN_TIMEOUT=15
+      STREAMING_READ_TIMEOUT=300{RESET}
+"""
+        print(warning_text, file=sys.stderr)
+
 # ==================================================================================================
 # Fake Reasoning Settings (Extended Thinking via Tag Injection)
 # ==================================================================================================

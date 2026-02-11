@@ -52,7 +52,7 @@
    - Recommended fix: remove legacy guard helpers once migration confidence is complete.
 
 2. Documentation sprawl created parallel handoff narratives.
-   - Evidence: overlapping docs (`CHANGES_CONTEXT_FULL.md:1`, `docs/HANDOFF_THINKING_POLICY_MIGRATION.md:1`, `PROMPT_KIRO_GATEWAY_DEEP_AUDIT_TR.md:1`).
+   - Evidence: overlapping docs (`fork-docs/CHANGES_CONTEXT_FULL.md:1`, `fork-docs/HANDOFF_THINKING_POLICY_MIGRATION.md:1`, `fork-docs/PROMPT_KIRO_GATEWAY_DEEP_AUDIT_TR.md:1`).
    - Recommended fix: treat this audit set as canonical and mark prior handoff docs as superseded.
 
 ## Applied refactor status in this branch

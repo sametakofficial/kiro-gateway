@@ -30,9 +30,9 @@ This file documents how this fork differs from upstream and why each change exis
   - Added explicit notes for enabling/disabling intervention features.
 - `README.md`
   - Added fork-specific "What does this fork do?" context and compatibility notes.
-- `CHANGES_CONTEXT_FULL.md` (new)
+- `fork-docs/CHANGES_CONTEXT_FULL.md` (new)
   - Fork handoff/change context documentation.
-- `docs/HANDOFF_THINKING_POLICY_MIGRATION.md` (new)
+- `fork-docs/HANDOFF_THINKING_POLICY_MIGRATION.md` (new)
   - Detailed migration notes for thinking-policy behavior.
 
 ### Core Runtime / Bootstrap
@@ -143,7 +143,7 @@ Purpose:
 
 ### New docs/tests
 
-- `KIRO_API_REVERSE_ENGINEERED.md`
+- `fork-docs/KIRO_API_REVERSE_ENGINEERED.md`
   - Source-backed findings for `Improperly formed request` failure modes.
 - `tests/unit/test_payload_guards.py`
   - Dedicated tests for payload-guard behavior.
@@ -180,13 +180,13 @@ Not part of product behavior:
 
 The following files are the maintained review set for this fork:
 
-- `FORK_CHANGELOG.md`
-- `ARCHITECTURE_AUDIT.md`
-- `SECURITY_REVIEW.md`
-- `PR_REVIEW_SUMMARY.md`
+- `fork-docs/FORK_CHANGELOG.md`
+- `fork-docs/ARCHITECTURE_AUDIT.md`
+- `fork-docs/SECURITY_REVIEW.md`
+- `fork-docs/PR_REVIEW_SUMMARY.md`
 
 Historical handoff/prompt files remain in the repository but are explicitly marked as superseded:
 
-- `CHANGES_CONTEXT_FULL.md`
-- `docs/HANDOFF_THINKING_POLICY_MIGRATION.md`
-- `PROMPT_KIRO_GATEWAY_DEEP_AUDIT_TR.md`
+- `fork-docs/CHANGES_CONTEXT_FULL.md`
+- `fork-docs/HANDOFF_THINKING_POLICY_MIGRATION.md`
+- `fork-docs/PROMPT_KIRO_GATEWAY_DEEP_AUDIT_TR.md`

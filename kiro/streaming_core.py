@@ -55,6 +55,7 @@ from kiro.parsers import (
 from kiro.config import (
     FIRST_TOKEN_TIMEOUT,
     FIRST_TOKEN_MAX_RETRIES,
+    FAKE_REASONING_ENABLED,
     FAKE_REASONING_HANDLING,
 )
 from kiro.thinking_parser import ThinkingParser

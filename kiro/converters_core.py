@@ -31,6 +31,7 @@ to convert their formats to Kiro API format.
 """
 
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -38,8 +39,23 @@ from loguru import logger
 
 from kiro.config import (
     TOOL_DESCRIPTION_MAX_LENGTH,
+    FAKE_REASONING_ENABLED,
     FAKE_REASONING_MAX_TOKENS,
+    TOOL_RESULT_GUARD_ENABLED,
+    TOOL_RESULT_MAX_CHARS,
+    TOOL_RESULT_TOTAL_MAX_CHARS,
+    TOOL_CALL_ARGS_GUARD_ENABLED,
+    TOOL_CALL_ARGS_MAX_CHARS,
+    QUEUED_ANNOUNCE_GUARD_ENABLED,
+    QUEUED_ANNOUNCE_MAX_CHARS,
+    QUEUED_ANNOUNCE_HEAD_CHARS,
+    QUEUED_ANNOUNCE_TAIL_CHARS,
+    TOOL_PAIRING_VALIDATOR_ENABLED,
+    MESSAGE_STRUCTURE_VALIDATOR_ENABLED,
+    KIRO_MAX_PAYLOAD_BYTES,
+    KIRO_MAX_HISTORY_ENTRIES,
 )
+from kiro.payload_guards import PayloadGuardConfig, apply_payload_guards
 
 
 # ==================================================================================================
@@ -335,9 +351,11 @@ def inject_thinking_tags(
     """
     Inject fake reasoning tags into content.
 
-    This function prepends the special
-    thinking mode tags to the content. These tags instruct the model to
-    include its reasoning process in the response.
+    This function prepends the special thinking mode tags to the content.
+    These tags instruct the model to include its reasoning process in the response.
+
+    Note: The decision to call this function is made by the caller based on
+    thinking policy (routes layer). This function always injects tags when called.
 
     Args:
         content: Original content string
@@ -346,7 +364,6 @@ def inject_thinking_tags(
     Returns:
         Content with thinking tags prepended
     """
-
     max_tokens = (
         thinking_max_tokens
         if thinking_max_tokens is not None
@@ -665,6 +682,230 @@ def convert_images_to_kiro_format(
 # Tool Results and Tool Uses Extraction
 # ==================================================================================================
 
+ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+# Minimal non-empty placeholder required by Kiro API for empty messages.
+# Keep this neutral and short to avoid user-visible noise.
+MINIMAL_MESSAGE_PLACEHOLDER = "."
+
+QUEUED_ANNOUNCE_MARKER = "[Queued announce messages while agent was busy]"
+QUEUED_ANNOUNCE_TASK_MARKER = 'A background task "'
+QUEUED_ANNOUNCE_FINDINGS_MARKER = "Findings:"
+
+
+def _stringify_tool_result_content(content: Any) -> str:
+    """
+    Convert tool_result content to plain text.
+
+    Args:
+        content: Tool result content in any supported format
+
+    Returns:
+        Plain text representation of the content
+    """
+    if isinstance(content, str):
+        return content
+    return extract_text_content(content)
+
+
+def _sanitize_tool_result_text(content_text: str) -> str:
+    """
+    Sanitize tool output text before forwarding to Kiro API.
+
+    Removes ANSI escape sequences and non-printable control characters that can
+    appear in terminal dumps or binary-like output while preserving newlines and tabs.
+
+    Args:
+        content_text: Raw tool output text
+
+    Returns:
+        Sanitized text
+    """
+    normalized = content_text.replace("\r\n", "\n").replace("\r", "\n")
+    without_ansi = ANSI_ESCAPE_RE.sub("", normalized)
+    return CONTROL_CHAR_RE.sub("", without_ansi)
+
+
+def _is_tool_args_oversized(arguments: Any) -> Tuple[bool, int]:
+    """
+    Check whether tool call arguments exceed configured guard size.
+
+    Args:
+        arguments: Tool call arguments (string or JSON-like object)
+
+    Returns:
+        Tuple (is_oversized, size_chars)
+    """
+    if not TOOL_CALL_ARGS_GUARD_ENABLED:
+        return False, 0
+
+    if isinstance(arguments, str):
+        size = len(arguments)
+    else:
+        try:
+            rendered = json.dumps(arguments, ensure_ascii=False)
+        except (TypeError, ValueError):
+            rendered = str(arguments)
+        size = len(rendered)
+
+    return size > max(256, TOOL_CALL_ARGS_MAX_CHARS), size
+
+
+def _build_tool_args_omitted_payload(size: int) -> Dict[str, Any]:
+    """
+    Build minimal synthetic payload for oversized tool arguments.
+
+    Args:
+        size: Original argument size in characters
+
+    Returns:
+        Small dictionary for model-visible tool error context
+    """
+    # Keep payload schema-safe by returning an empty object.
+    # Some upstream validators reject unexpected keys in tool input.
+    logger.warning(
+        "Tool call arguments omitted by guard: {} chars > {} chars",
+        size,
+        max(256, TOOL_CALL_ARGS_MAX_CHARS),
+    )
+    return {}
+
+
+def _build_preview(
+    content_text: str, head_lines: int = 30, tail_lines: int = 30
+) -> str:
+    """
+    Build a preview of oversized content showing first and last lines.
+
+    Args:
+        content_text: Full content text
+        head_lines: Number of lines to show from start
+        tail_lines: Number of lines to show from end
+
+    Returns:
+        Preview string with head/tail and omission marker
+    """
+    lines = content_text.splitlines()
+    if len(lines) <= head_lines + tail_lines:
+        return content_text
+
+    head = lines[:head_lines]
+    tail = lines[-tail_lines:]
+    omitted = len(lines) - head_lines - tail_lines
+
+    return (
+        "\n".join(head) + f"\n\n... [{omitted} lines omitted] ...\n\n" + "\n".join(tail)
+    )
+
+
+def _looks_like_queued_announce(text: str) -> bool:
+    """
+    Detect OpenClaw queued-announce system notice blocks.
+
+    Args:
+        text: Message text block
+
+    Returns:
+        True if text looks like a queued announce notice
+    """
+    if not text:
+        return False
+
+    if QUEUED_ANNOUNCE_MARKER in text:
+        return True
+
+    if QUEUED_ANNOUNCE_TASK_MARKER in text and QUEUED_ANNOUNCE_FINDINGS_MARKER in text:
+        return True
+
+    return False
+
+
+def _compact_queued_announce_text(text: str) -> str:
+    """
+    Compact oversized queued-announce text while preserving useful context.
+
+    Args:
+        text: Original queued-announce text
+
+    Returns:
+        Original text or compacted head/tail preview with gateway notice
+    """
+    max_chars = max(512, QUEUED_ANNOUNCE_MAX_CHARS)
+    if len(text) <= max_chars:
+        return text
+
+    head_chars = max(200, min(QUEUED_ANNOUNCE_HEAD_CHARS, max_chars - 128))
+    tail_chars = max(120, min(QUEUED_ANNOUNCE_TAIL_CHARS, max_chars - head_chars - 64))
+
+    if head_chars + tail_chars >= len(text):
+        return text
+
+    omitted_chars = len(text) - head_chars - tail_chars
+    notice = (
+        "\n\n[Gateway notice] Queued-announce findings truncated "
+        f"({omitted_chars:,} chars omitted) to avoid upstream validation errors.\n\n"
+    )
+    return text[:head_chars] + notice + text[-tail_chars:]
+
+
+def apply_queued_announce_guard(messages: List[UnifiedMessage]) -> List[UnifiedMessage]:
+    """
+    Compact oversized OpenClaw queued-announce notices.
+
+    This guard is intentionally narrow and only targets infrastructure-generated
+    queued announce messages that can otherwise trigger vague upstream 400 errors.
+    Regular user-authored prompts are not modified.
+
+    Args:
+        messages: Unified messages to process
+
+    Returns:
+        Same message list with compacted queued-announce text blocks if needed
+    """
+    # Deprecated wrapper kept for backward compatibility.
+    # Canonical implementation lives in kiro.middleware.queued_announce_compactor.
+    if not QUEUED_ANNOUNCE_GUARD_ENABLED or not messages:
+        return messages
+
+    from kiro.middleware.queued_announce_compactor import compact_queued_announces
+
+    return compact_queued_announces(
+        messages,
+        max_chars=QUEUED_ANNOUNCE_MAX_CHARS,
+        head_chars=QUEUED_ANNOUNCE_HEAD_CHARS,
+        tail_chars=QUEUED_ANNOUNCE_TAIL_CHARS,
+    )
+
+
+def apply_tool_result_guard(messages: List[UnifiedMessage]) -> List[UnifiedMessage]:
+    """
+    Apply deterministic size guards to tool_result payloads before Kiro conversion.
+
+    Guard behavior is intentionally non-user-facing:
+    - Oversized historical tool results are omitted first (largest first)
+    - Oversized active tool results are converted to synthetic tool errors
+    - No guard-specific ValueError is raised to callers
+
+    Args:
+        messages: Unified messages to process
+
+    Returns:
+        The same message list with guarded tool_result content
+    """
+    # Deprecated wrapper kept for backward compatibility.
+    # Canonical implementation lives in kiro.middleware.payload_size_guard.
+    if not TOOL_RESULT_GUARD_ENABLED or not messages:
+        return messages
+
+    from kiro.middleware.payload_size_guard import enforce_tool_result_limits
+
+    return enforce_tool_result_limits(
+        messages,
+        per_result_max_chars=TOOL_RESULT_MAX_CHARS,
+        total_max_chars=TOOL_RESULT_TOTAL_MAX_CHARS,
+    )
+
 
 def convert_tool_results_to_kiro_format(
     tool_results: List[Dict[str, Any]],
@@ -693,10 +934,14 @@ def convert_tool_results_to_kiro_format(
         if not content_text:
             content_text = "(empty result)"
 
+        status = (
+            "error" if tr.get("is_error") or tr.get("status") == "error" else "success"
+        )
+
         kiro_results.append(
             {
                 "content": [{"text": content_text}],
-                "status": "success",
+                "status": status,
                 "toolUseId": tr.get("tool_use_id", ""),
             }
         )
@@ -763,11 +1008,15 @@ def extract_tool_uses_from_message(
             if isinstance(tc, dict):
                 func = tc.get("function", {})
                 arguments = func.get("arguments", "{}")
-                # Handle both string (OpenAI) and dict (Anthropic unified) formats
-                if isinstance(arguments, str):
-                    input_data = json.loads(arguments) if arguments else {}
+                oversized, size = _is_tool_args_oversized(arguments)
+                if oversized:
+                    input_data = _build_tool_args_omitted_payload(size)
                 else:
-                    input_data = arguments if arguments else {}
+                    # Handle both string (OpenAI) and dict (Anthropic unified) formats
+                    if isinstance(arguments, str):
+                        input_data = json.loads(arguments) if arguments else {}
+                    else:
+                        input_data = arguments if arguments else {}
                 tool_uses.append(
                     {
                         "name": func.get("name", ""),
@@ -780,10 +1029,16 @@ def extract_tool_uses_from_message(
     if isinstance(content, list):
         for item in content:
             if isinstance(item, dict) and item.get("type") == "tool_use":
+                raw_input = item.get("input", {})
+                oversized, size = _is_tool_args_oversized(raw_input)
+                if oversized:
+                    input_data = _build_tool_args_omitted_payload(size)
+                else:
+                    input_data = raw_input if raw_input else {}
                 tool_uses.append(
                     {
                         "name": item.get("name", ""),
-                        "input": item.get("input", {}),
+                        "input": input_data,
                         "toolUseId": item.get("id", ""),
                     }
                 )
@@ -822,7 +1077,14 @@ def tool_calls_to_text(tool_calls: List[Dict[str, Any]]) -> str:
         func = tc.get("function", {})
         name = func.get("name", "unknown")
         arguments = func.get("arguments", "{}")
+        oversized, size = _is_tool_args_oversized(arguments)
         tool_id = tc.get("id", "")
+
+        if oversized:
+            arguments = (
+                "(tool arguments omitted by gateway: "
+                f"{size} chars > limit {max(256, TOOL_CALL_ARGS_MAX_CHARS)} chars)"
+            )
 
         # Format: [Tool: name] (id)\narguments
         if tool_id:
@@ -1044,6 +1306,126 @@ def ensure_assistant_before_tool_results(
     return result, converted_any_tool_results
 
 
+def ensure_tool_call_result_consistency(
+    messages: List[UnifiedMessage],
+) -> Tuple[List[UnifiedMessage], bool]:
+    """
+    Ensure tool calls are not left unresolved before regular user messages.
+
+    Kiro API can reject payloads with vague "Improperly formed request" errors when
+    an assistant tool call is followed by regular user text without corresponding
+    tool results. This function minimally fixes malformed histories by converting
+    unresolved tool calls to text in their original assistant messages.
+
+    Args:
+        messages: Unified message sequence
+
+    Returns:
+        Tuple of (normalized_messages, converted_any)
+    """
+    if not messages:
+        return [], False
+
+    result: List[UnifiedMessage] = []
+    converted_any = False
+
+    # pending entries: (assistant_message_object, tool_call_dict)
+    pending: Dict[str, Tuple[UnifiedMessage, Dict[str, Any]]] = {}
+    pending_no_id: List[Tuple[UnifiedMessage, Dict[str, Any]]] = []
+
+    def _flush_pending_to_text() -> int:
+        grouped: Dict[int, Tuple[UnifiedMessage, List[Dict[str, Any]]]] = {}
+
+        for _, (assistant_msg, tool_call) in list(pending.items()):
+            key = id(assistant_msg)
+            if key not in grouped:
+                grouped[key] = (assistant_msg, [])
+            grouped[key][1].append(tool_call)
+
+        for assistant_msg, tool_call in pending_no_id:
+            key = id(assistant_msg)
+            if key not in grouped:
+                grouped[key] = (assistant_msg, [])
+            grouped[key][1].append(tool_call)
+
+        converted_count = 0
+        for assistant_msg, unresolved_calls in grouped.values():
+            if not unresolved_calls:
+                continue
+
+            unresolved_text = tool_calls_to_text(unresolved_calls)
+            if unresolved_text:
+                existing = extract_text_content(assistant_msg.content)
+                assistant_msg.content = (
+                    f"{existing}\n\n{unresolved_text}" if existing else unresolved_text
+                )
+
+            if assistant_msg.tool_calls:
+                unresolved_ids = {
+                    tc.get("id", "") for tc in unresolved_calls if tc.get("id", "")
+                }
+                remaining = []
+                for tc in assistant_msg.tool_calls:
+                    tc_id = tc.get("id", "") if isinstance(tc, dict) else ""
+                    if tc_id and tc_id in unresolved_ids:
+                        continue
+                    if not tc_id and tc in unresolved_calls:
+                        continue
+                    remaining.append(tc)
+                assistant_msg.tool_calls = remaining or None
+
+            converted_count += len(unresolved_calls)
+
+        pending.clear()
+        pending_no_id.clear()
+        return converted_count
+
+    for msg in messages:
+        result.append(msg)
+
+        if msg.role == "assistant" and msg.tool_calls:
+            for tc in msg.tool_calls:
+                if not isinstance(tc, dict):
+                    continue
+                tc_id = str(tc.get("id", "")).strip()
+                if tc_id:
+                    pending[tc_id] = (msg, tc)
+                else:
+                    pending_no_id.append((msg, tc))
+            continue
+
+        if msg.role == "user" and msg.tool_results:
+            for tr in msg.tool_results:
+                if not isinstance(tr, dict):
+                    continue
+                tid = str(tr.get("tool_use_id", "")).strip()
+                if tid and tid in pending:
+                    pending.pop(tid, None)
+            continue
+
+        # Regular user content while unresolved tool calls exist -> malformed flow.
+        if msg.role == "user" and not msg.tool_results and (pending or pending_no_id):
+            converted = _flush_pending_to_text()
+            if converted > 0:
+                converted_any = True
+                logger.debug(
+                    "Converted {} unresolved tool_call(s) to text before regular user message",
+                    converted,
+                )
+
+    # End-of-history cleanup for unresolved tool calls.
+    if pending or pending_no_id:
+        converted = _flush_pending_to_text()
+        if converted > 0:
+            converted_any = True
+            logger.debug(
+                "Converted {} unresolved trailing tool_call(s) to text at history end",
+                converted,
+            )
+
+    return result, converted_any
+
+
 def merge_adjacent_messages(messages: List[UnifiedMessage]) -> List[UnifiedMessage]:
     """
     Merges adjacent messages with the same role.
@@ -1174,9 +1556,10 @@ def ensure_first_message_is_user(
             f"(Kiro API requires conversations to start with user)"
         )
 
-        # Create minimal synthetic user message (matches LiteLLM behavior)
-        # Using "(empty)" as minimal valid content to avoid disrupting conversation context
-        synthetic_user = UnifiedMessage(role="user", content="(empty)")
+        # Create minimal synthetic user message
+        synthetic_user = UnifiedMessage(
+            role="user", content=MINIMAL_MESSAGE_PLACEHOLDER
+        )
 
         return [synthetic_user] + messages
 
@@ -1246,7 +1629,7 @@ def ensure_alternating_roles(messages: List[UnifiedMessage]) -> List[UnifiedMess
 
     Kiro API requires alternating userInputMessage and assistantResponseMessage.
     When consecutive user messages are detected, synthetic assistant messages
-    with "(empty)" placeholder are inserted between them to maintain alternation.
+    with a minimal placeholder are inserted between them to maintain alternation.
 
     This fixes multiple unknown roles (converted to user)
     create consecutive userInputMessage entries that violate Kiro API requirements.
@@ -1284,7 +1667,7 @@ def ensure_alternating_roles(messages: List[UnifiedMessage]) -> List[UnifiedMess
         if msg.role == "user" and prev_role == "user":
             synthetic_assistant = UnifiedMessage(
                 role="assistant",
-                content="(empty)",  # Consistent with build_kiro_history() placeholder
+                content=MINIMAL_MESSAGE_PLACEHOLDER,
             )
             result.append(synthetic_assistant)
             synthetic_count += 1
@@ -1331,7 +1714,7 @@ def build_kiro_history(
 
             # Fallback for empty content - Kiro API requires non-empty content
             if not content:
-                content = "(empty)"
+                content = MINIMAL_MESSAGE_PLACEHOLDER
 
             user_input = {
                 "content": content,
@@ -1375,7 +1758,7 @@ def build_kiro_history(
 
             # Fallback for empty content - Kiro API requires non-empty content
             if not content:
-                content = "(empty)"
+                content = MINIMAL_MESSAGE_PLACEHOLDER
 
             assistant_response = {"content": content}
 
@@ -1432,6 +1815,34 @@ def build_kiro_payload(
     # Validate tool names against Kiro API 64-character limit
     validate_tool_names(processed_tools)
 
+    # --- Middleware Pipeline ---
+    # Run the middleware pipeline BEFORE any legacy processing.
+    # This fixes orphaned tool_use/tool_result blocks, role alternation issues,
+    # and oversized payloads that cause "Improperly formed request" errors.
+    from kiro.middleware.pipeline import run_message_pipeline, run_tool_pipeline
+
+    messages = run_message_pipeline(
+        messages,
+        tool_result_max_chars=TOOL_RESULT_MAX_CHARS if TOOL_RESULT_GUARD_ENABLED else 0,
+        tool_result_total_max_chars=TOOL_RESULT_TOTAL_MAX_CHARS
+        if TOOL_RESULT_GUARD_ENABLED
+        else 0,
+        tool_call_args_max_chars=TOOL_CALL_ARGS_MAX_CHARS
+        if TOOL_CALL_ARGS_GUARD_ENABLED
+        else 0,
+        queued_announce_max_chars=QUEUED_ANNOUNCE_MAX_CHARS
+        if QUEUED_ANNOUNCE_GUARD_ENABLED
+        else 0,
+        queued_announce_head_chars=QUEUED_ANNOUNCE_HEAD_CHARS,
+        queued_announce_tail_chars=QUEUED_ANNOUNCE_TAIL_CHARS,
+        enable_tool_pairing=TOOL_PAIRING_VALIDATOR_ENABLED,
+        enable_structure_validation=MESSAGE_STRUCTURE_VALIDATOR_ENABLED,
+        enable_size_guards=TOOL_RESULT_GUARD_ENABLED or TOOL_CALL_ARGS_GUARD_ENABLED,
+        enable_queued_announce=QUEUED_ANNOUNCE_GUARD_ENABLED,
+    )
+
+    processed_tools = run_tool_pipeline(processed_tools)
+
     # Add tool documentation to system prompt if present
     full_system_prompt = system_prompt
     if tool_documentation:
@@ -1460,29 +1871,46 @@ def build_kiro_payload(
             else truncation_system_addition.strip()
         )
 
+    # Legacy guards are intentionally skipped here because the middleware pipeline
+    # above already applies tool-result and queued-announce guards.
+    # Running both paths causes double mutation and makes behavior harder to reason about.
+    guarded_source_messages = messages
+
     # If no tools are defined, strip ALL tool-related content from messages
     # Kiro API rejects requests with toolResults but no tools
     if not tools:
-        messages_without_tools, had_tool_content = strip_all_tool_content(messages)
+        messages_without_tools, had_tool_content = strip_all_tool_content(
+            guarded_source_messages
+        )
         messages_with_assistants = messages_without_tools
         converted_tool_results = had_tool_content
     else:
         # Ensure assistant messages exist before tool_results (Kiro API requirement)
         # Also returns flag if any tool_results were converted (to skip thinking tag injection)
         messages_with_assistants, converted_tool_results = (
-            ensure_assistant_before_tool_results(messages)
+            ensure_assistant_before_tool_results(guarded_source_messages)
         )
 
-    # Merge adjacent messages with the same role
-    merged_messages = merge_adjacent_messages(messages_with_assistants)
+        # Ensure unresolved tool calls do not remain before regular user text.
+        # This prevents malformed tool-call flow rejections from upstream.
+        messages_with_assistants, converted_unresolved_tool_calls = (
+            ensure_tool_call_result_consistency(messages_with_assistants)
+        )
+        converted_tool_results = (
+            converted_tool_results or converted_unresolved_tool_calls
+        )
+
+    guarded_messages = messages_with_assistants
+
+    # Normalize unknown roles to 'user' before merge.
+    # This avoids creating new consecutive-user pairs after merge stage.
+    merged_messages = normalize_message_roles(guarded_messages)
+
+    # Merge adjacent messages after normalization.
+    merged_messages = merge_adjacent_messages(merged_messages)
 
     # Ensure first message is from user (Kiro API requirement, fixes issue #60)
     merged_messages = ensure_first_message_is_user(merged_messages)
-
-    # Normalize unknown roles to 'user' (fixes issue #64)
-    # This must happen BEFORE ensure_alternating_roles() so that consecutive
-    # messages with unknown roles (e.g., 'developer') are properly detected
-    merged_messages = normalize_message_roles(merged_messages)
 
     # Ensure alternating user/assistant roles (fixes issue #64)
     # Insert synthetic assistant messages between consecutive user messages
@@ -1593,5 +2021,47 @@ def build_kiro_payload(
     # Add profileArn
     if profile_arn:
         payload["profileArn"] = profile_arn
+
+    # Apply payload-level guards (size, empty toolUses, orphaned toolResults).
+    payload_guard_stats = apply_payload_guards(
+        payload,
+        PayloadGuardConfig(
+            max_payload_bytes=max(50_000, KIRO_MAX_PAYLOAD_BYTES),
+            max_history_entries=max(0, KIRO_MAX_HISTORY_ENTRIES),
+        ),
+    )
+
+    if payload_guard_stats.stripped_empty_tool_uses > 0:
+        logger.warning(
+            "[KiroPayloadSanitizer] Stripped {} empty toolUses arrays from history",
+            payload_guard_stats.stripped_empty_tool_uses,
+        )
+
+    if (
+        payload_guard_stats.original_history_entries
+        != payload_guard_stats.final_history_entries
+        or payload_guard_stats.original_payload_bytes
+        != payload_guard_stats.final_payload_bytes
+    ):
+        logger.warning(
+            "[KiroPayloadSizeGuard] History trimmed: {} -> {} entries, "
+            "payload {} -> {} bytes (limits: {} bytes, {} entries)",
+            payload_guard_stats.original_history_entries,
+            payload_guard_stats.final_history_entries,
+            payload_guard_stats.original_payload_bytes,
+            payload_guard_stats.final_payload_bytes,
+            max(50_000, KIRO_MAX_PAYLOAD_BYTES),
+            max(0, KIRO_MAX_HISTORY_ENTRIES),
+        )
+
+    if (
+        payload_guard_stats.removed_orphaned_history_tool_results > 0
+        or payload_guard_stats.removed_orphaned_current_tool_results > 0
+    ):
+        logger.warning(
+            "[KiroPayloadSanitizer] Removed orphaned toolResults: history={}, current={}",
+            payload_guard_stats.removed_orphaned_history_tool_results,
+            payload_guard_stats.removed_orphaned_current_tool_results,
+        )
 
     return KiroPayloadResult(payload=payload, tool_documentation=tool_documentation)

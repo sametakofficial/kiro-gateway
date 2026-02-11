@@ -299,11 +299,15 @@ async def stream_kiro_to_openai_internal(
                 "choices": [
                     {
                         "index": 0,
-                        "delta": {"tool_calls": indexed_tool_calls},
+                        "delta": {
+                            **({"role": "assistant"} if first_chunk else {}),
+                            "tool_calls": indexed_tool_calls,
+                        },
                         "finish_reason": None,
                     }
                 ],
             }
+            first_chunk = False
             yield f"data: {json.dumps(tool_calls_chunk, ensure_ascii=False)}\n\n"
 
         # Save truncation info for recovery (tracked by stable identifiers)

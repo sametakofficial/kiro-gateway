@@ -356,7 +356,7 @@ def build_kiro_payload(
         f"Converting OpenAI request: model={request_data.model} -> {model_id}, "
         f"messages={len(unified_messages)}, tools={len(unified_tools) if unified_tools else 0}, "
         f"system_prompt_length={len(system_prompt)}, thinking_source={policy.source}, "
-        f"thinking_level={policy.normalized_level}, thinking_budget={policy.thinking_max_tokens}"
+        f"thinking_source={policy.source}, thinking_budget={policy.thinking_max_tokens}"
     )
 
     # Use core function to build payload

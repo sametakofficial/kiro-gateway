@@ -43,6 +43,7 @@ from kiro.config import (
     FIRST_TOKEN_MAX_RETRIES,
     STREAMING_READ_TIMEOUT,
     ALLOW_UNTRUSTED_TLS,
+    SKIP_AUTH,
 )
 from kiro.auth import KiroAuthManager
 from kiro.utils import get_kiro_headers
@@ -216,9 +217,12 @@ class KiroHttpClient:
 
         for attempt in range(max_retries):
             try:
-                # Get current token
-                token = await self.auth_manager.get_access_token()
-                headers = get_kiro_headers(self.auth_manager, token)
+                if SKIP_AUTH:
+                    headers = get_kiro_headers(self.auth_manager, "")
+                    headers.pop("Authorization", None)
+                else:
+                    token = await self.auth_manager.get_access_token()
+                    headers = get_kiro_headers(self.auth_manager, token)
 
                 if stream:
                     # Prevent CLOSE_WAIT connection leak (issue #38)
@@ -239,7 +243,7 @@ class KiroHttpClient:
                     return response
 
                 # 403 - token expired, refresh and retry
-                if response.status_code == 403:
+                if response.status_code == 403 and not SKIP_AUTH:
                     logger.warning(
                         f"Received 403, refreshing token (attempt {attempt + 1}/{MAX_RETRIES})"
                     )

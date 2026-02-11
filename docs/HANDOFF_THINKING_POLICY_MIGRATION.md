@@ -1,5 +1,8 @@
 # Handoff Dossier: Thinking Policy Migration (Suffix Rollback -> API-Driven Policy)
 
+> Superseded by canonical docs: `FORK_CHANGELOG.md`, `ARCHITECTURE_AUDIT.md`, `SECURITY_REVIEW.md`, `PR_REVIEW_SUMMARY.md`.
+> Kept only as historical migration context.
+
 Status: prepared for transfer to another AI engineer
 Scope: `kiro-gateway` codebase + OpenCode integration notes
 Authoring context: this document captures what was changed, what was reverted, what was learned, and a production-safe implementation plan

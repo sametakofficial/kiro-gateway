@@ -9,6 +9,9 @@ This module resolves per-request thinking behavior from:
 3. Existing FAKE_REASONING_* defaults (last resort)
 
 It is intentionally stateless and does not modify payload formats.
+
+All effort strings (e.g. "low", "high", "max") are converted to numeric
+token budgets in a single step.  No intermediate string labels are stored.
 """
 
 from dataclasses import dataclass
@@ -26,9 +29,48 @@ from kiro.config import (
     THINKING_OPENAI_MEDIUM_TOKENS,
     THINKING_OPENAI_HIGH_TOKENS,
     THINKING_OPENAI_XHIGH_TOKENS,
+    THINKING_ANTHROPIC_LOW_TOKENS,
+    THINKING_ANTHROPIC_MEDIUM_TOKENS,
     THINKING_ANTHROPIC_HIGH_TOKENS,
     THINKING_ANTHROPIC_MAX_TOKENS,
 )
+
+
+# ---------------------------------------------------------------------------
+# Effort-to-budget maps (single-step string -> int conversion)
+# ---------------------------------------------------------------------------
+
+# OpenAI effort strings mapped to numeric token budgets.
+# 0 means thinking is disabled.  Keys cover all known aliases.
+_OPENAI_EFFORT_MAP: Dict[str, int] = {
+    "none": 0,
+    "off": 0,
+    "disabled": 0,
+    "minimal": THINKING_OPENAI_MINIMAL_TOKENS,
+    "low": THINKING_OPENAI_LOW_TOKENS,
+    "medium": THINKING_OPENAI_MEDIUM_TOKENS,
+    "high": THINKING_OPENAI_HIGH_TOKENS,
+    "on": THINKING_OPENAI_HIGH_TOKENS,
+    "xhigh": THINKING_OPENAI_XHIGH_TOKENS,
+    "max": THINKING_ANTHROPIC_MAX_TOKENS,
+}
+
+# Anthropic effort strings mapped to numeric token budgets.
+# Covers the 4 official Anthropic effort levels (low/medium/high/max)
+# plus common aliases.
+_ANTHROPIC_EFFORT_MAP: Dict[str, int] = {
+    "none": 0,
+    "off": 0,
+    "disabled": 0,
+    "low": THINKING_ANTHROPIC_LOW_TOKENS,
+    "minimal": THINKING_ANTHROPIC_LOW_TOKENS,
+    "medium": THINKING_ANTHROPIC_MEDIUM_TOKENS,
+    "high": THINKING_ANTHROPIC_HIGH_TOKENS,
+    "on": THINKING_ANTHROPIC_HIGH_TOKENS,
+    "enabled": THINKING_ANTHROPIC_HIGH_TOKENS,
+    "xhigh": THINKING_ANTHROPIC_MAX_TOKENS,
+    "max": THINKING_ANTHROPIC_MAX_TOKENS,
+}
 
 
 @dataclass(frozen=True)
@@ -38,13 +80,11 @@ class ThinkingPolicy:
     Attributes:
         inject_thinking: Whether thinking tags should be injected.
         thinking_max_tokens: Token budget for thinking (None when disabled).
-        normalized_level: Internal normalized level label.
         source: Source of policy decision (for diagnostics/logging).
     """
 
     inject_thinking: bool
     thinking_max_tokens: Optional[int]
-    normalized_level: Optional[str]
     source: str
 
 
@@ -102,11 +142,15 @@ def _clamp_budget(value: int) -> int:
 
 
 def _default_policy() -> ThinkingPolicy:
-    """Return policy from existing FAKE_REASONING defaults."""
+    """Return policy from existing FAKE_REASONING defaults.
+
+    Returns:
+        ThinkingPolicy based on FAKE_REASONING_ENABLED / FAKE_REASONING_MAX_TOKENS.
+    """
 
     if not FAKE_REASONING_ENABLED:
-        return ThinkingPolicy(False, None, "off", "default")
-    return ThinkingPolicy(True, FAKE_REASONING_MAX_TOKENS, "default", "default")
+        return ThinkingPolicy(False, None, "default")
+    return ThinkingPolicy(True, FAKE_REASONING_MAX_TOKENS, "default")
 
 
 def _warn_invalid(field_name: str, value: Any) -> None:
@@ -120,79 +164,46 @@ def _warn_invalid(field_name: str, value: Any) -> None:
     logger.warning(f"Ignoring invalid thinking hint: {field_name}={value!r}")
 
 
-def _openai_budget_for_level(level: str) -> Optional[int]:
-    """Map OpenAI normalized effort level to budget.
+# ---------------------------------------------------------------------------
+# Single-step effort string -> numeric budget converters
+# ---------------------------------------------------------------------------
+
+
+def _effort_to_budget_openai(value: Any) -> Optional[int]:
+    """Convert an OpenAI effort string directly to a numeric token budget.
 
     Args:
-        level: Normalized effort level.
+        value: Raw effort string (e.g. "low", "high", "max").
 
     Returns:
-        Token budget or None for off.
-    """
-
-    if level == "off":
-        return None
-    if level == "minimal":
-        return THINKING_OPENAI_MINIMAL_TOKENS
-    if level == "low":
-        return THINKING_OPENAI_LOW_TOKENS
-    if level == "medium":
-        return THINKING_OPENAI_MEDIUM_TOKENS
-    if level == "high":
-        return THINKING_OPENAI_HIGH_TOKENS
-    if level == "max":
-        return THINKING_ANTHROPIC_MAX_TOKENS
-    if level == "xhigh":
-        return THINKING_OPENAI_XHIGH_TOKENS
-    return None
-
-
-def _normalize_openai_level(value: Any) -> Optional[str]:
-    """Normalize OpenAI effort aliases.
-
-    Args:
-        value: Raw effort value.
-
-    Returns:
-        Normalized level or None for unsupported values.
+        Token budget (0 = off), or None if the value is unrecognised.
     """
 
     if not isinstance(value, str):
         return None
     raw = value.strip().lower()
-    if raw in ("none", "off", "disabled"):
-        return "off"
-    if raw == "on":
-        return "high"
-    if raw == "minimal":
-        return "minimal"
-    if raw == "max":
-        return "max"
-    if raw in ("low", "medium", "high", "xhigh"):
-        return raw
-    return None
+    return _OPENAI_EFFORT_MAP.get(raw)
 
 
-def _normalize_anthropic_level(value: Any) -> Optional[str]:
-    """Normalize Anthropics-compatible effort/mode aliases.
+def _effort_to_budget_anthropic(value: Any) -> Optional[int]:
+    """Convert an Anthropic effort string directly to a numeric token budget.
 
     Args:
-        value: Raw effort value.
+        value: Raw effort string (e.g. "low", "medium", "high", "max").
 
     Returns:
-        Normalized level or None.
+        Token budget (0 = off), or None if the value is unrecognised.
     """
 
     if not isinstance(value, str):
         return None
     raw = value.strip().lower()
-    if raw in ("none", "off", "disabled"):
-        return "off"
-    if raw == "max" or raw == "xhigh":
-        return "max"
-    if raw in ("high", "medium", "low", "minimal", "adaptive", "enabled"):
-        return "high"
-    return None
+    return _ANTHROPIC_EFFORT_MAP.get(raw)
+
+
+# ---------------------------------------------------------------------------
+# Body budget parsers (numeric)
+# ---------------------------------------------------------------------------
 
 
 def _parse_body_budget_openai(request_data: Mapping[str, Any]) -> Optional[int]:
@@ -236,34 +247,6 @@ def _parse_body_budget_openai(request_data: Mapping[str, Any]) -> Optional[int]:
     return None
 
 
-def _parse_body_effort_openai(request_data: Mapping[str, Any]) -> Optional[str]:
-    """Extract effort/mode from OpenAI-compatible request body.
-
-    Args:
-        request_data: Request payload dictionary.
-
-    Returns:
-        Normalized level or None.
-    """
-
-    top_level = _normalize_openai_level(
-        request_data.get("reasoning_effort") or request_data.get("reasoningEffort")
-    )
-    if top_level:
-        return top_level
-
-    reasoning = request_data.get("reasoning")
-    if isinstance(reasoning, Mapping):
-        nested = _normalize_openai_level(reasoning.get("effort"))
-        if nested:
-            return nested
-        nested = _normalize_openai_level(reasoning.get("reasoningEffort"))
-        if nested:
-            return nested
-
-    return None
-
-
 def _parse_body_budget_anthropic(request_data: Mapping[str, Any]) -> Optional[int]:
     """Extract explicit numeric budget from Anthropic-compatible request body.
 
@@ -299,14 +282,56 @@ def _parse_body_budget_anthropic(request_data: Mapping[str, Any]) -> Optional[in
     return None
 
 
-def _parse_body_effort_anthropic(request_data: Mapping[str, Any]) -> Optional[str]:
-    """Extract effort/mode from Anthropic-compatible request body.
+# ---------------------------------------------------------------------------
+# Body effort parsers (string -> numeric budget in one step)
+# ---------------------------------------------------------------------------
+
+
+def _parse_body_effort_openai(request_data: Mapping[str, Any]) -> Optional[int]:
+    """Extract effort from OpenAI-compatible request body as numeric budget.
+
+    Checks top-level reasoning_effort / reasoningEffort and nested
+    reasoning.effort / reasoning.reasoningEffort fields.
 
     Args:
         request_data: Request payload dictionary.
 
     Returns:
-        Normalized level or None.
+        Numeric token budget (0 = off), or None if no effort hint found.
+    """
+
+    top_level = _effort_to_budget_openai(
+        request_data.get("reasoning_effort") or request_data.get("reasoningEffort")
+    )
+    if top_level is not None:
+        return top_level
+
+    reasoning = request_data.get("reasoning")
+    if isinstance(reasoning, Mapping):
+        nested = _effort_to_budget_openai(reasoning.get("effort"))
+        if nested is not None:
+            return nested
+        nested = _effort_to_budget_openai(reasoning.get("reasoningEffort"))
+        if nested is not None:
+            return nested
+
+    return None
+
+
+def _parse_body_effort_anthropic(request_data: Mapping[str, Any]) -> Optional[int]:
+    """Extract effort from Anthropic-compatible request body as numeric budget.
+
+    Handles:
+    - thinking.type: "disabled" -> 0 (off)
+    - thinking.type: "enabled" / "on" -> ANTHROPIC_HIGH_TOKENS (default)
+    - thinking.type: "adaptive" -> reads output_config.effort, defaults to HIGH
+    - output_config.effort / outputConfig.effort -> effort string to budget
+
+    Args:
+        request_data: Request payload dictionary.
+
+    Returns:
+        Numeric token budget (0 = off), or None if no effort hint found.
     """
 
     thinking = request_data.get("thinking")
@@ -315,19 +340,43 @@ def _parse_body_effort_anthropic(request_data: Mapping[str, Any]) -> Optional[st
         if isinstance(thinking_type, str):
             normalized_type = thinking_type.strip().lower()
             if normalized_type == "disabled":
-                return "off"
-            if normalized_type in ("enabled", "adaptive", "on"):
-                return "high"
+                return 0
 
+            if normalized_type == "adaptive":
+                # Adaptive thinking: read effort from output_config, default high
+                output_config = request_data.get("output_config")
+                if output_config is None:
+                    output_config = request_data.get("outputConfig")
+                if isinstance(output_config, Mapping):
+                    effort_budget = _effort_to_budget_anthropic(
+                        output_config.get("effort")
+                    )
+                    if effort_budget is not None:
+                        return effort_budget
+                # Adaptive with no effort specified -> default high
+                return THINKING_ANTHROPIC_HIGH_TOKENS
+
+            if normalized_type in ("enabled", "on"):
+                # Enabled without budget_tokens -> default high
+                # (If budget_tokens was present, _parse_body_budget_anthropic
+                #  would have already returned before this function is called)
+                return THINKING_ANTHROPIC_HIGH_TOKENS
+
+    # Standalone output_config.effort (without thinking block)
     output_config = request_data.get("output_config")
     if output_config is None:
         output_config = request_data.get("outputConfig")
     if isinstance(output_config, Mapping):
-        effort = _normalize_anthropic_level(output_config.get("effort"))
-        if effort:
-            return effort
+        effort_budget = _effort_to_budget_anthropic(output_config.get("effort"))
+        if effort_budget is not None:
+            return effort_budget
 
     return None
+
+
+# ---------------------------------------------------------------------------
+# Header parsers
+# ---------------------------------------------------------------------------
 
 
 def _parse_header_budget(
@@ -352,58 +401,84 @@ def _parse_header_budget(
     return parsed, "x-thinking-budget"
 
 
-def _parse_header_level_openai(
+def _parse_header_effort_openai(
     headers: Mapping[str, str],
-) -> Tuple[Optional[str], Optional[str]]:
-    """Extract OpenAI-style effort level from fallback headers.
+) -> Tuple[Optional[int], Optional[str]]:
+    """Extract OpenAI-style effort from fallback headers as numeric budget.
 
     Args:
         headers: Normalized lowercase headers.
 
     Returns:
-        Tuple of (level, source_header).
+        Tuple of (budget, source_header). Budget is 0 for off, None if absent.
     """
 
     candidates = (
-        ("x-reasoning-effort", _normalize_openai_level),
-        ("x-thinking-mode", _normalize_openai_level),
+        ("x-reasoning-effort", _effort_to_budget_openai),
+        ("x-thinking-mode", _effort_to_budget_openai),
     )
-    for name, parser in candidates:
+    for name, converter in candidates:
         raw = headers.get(name)
         if raw is None:
             continue
-        level = parser(raw)
-        if level:
-            return level, name
+        budget = converter(raw)
+        if budget is not None:
+            return budget, name
         _warn_invalid(name, raw)
     return None, None
 
 
-def _parse_header_level_anthropic(
+def _parse_header_effort_anthropic(
     headers: Mapping[str, str],
-) -> Tuple[Optional[str], Optional[str]]:
-    """Extract Anthropic-style effort level from fallback headers.
+) -> Tuple[Optional[int], Optional[str]]:
+    """Extract Anthropic-style effort from fallback headers as numeric budget.
 
     Args:
         headers: Normalized lowercase headers.
 
     Returns:
-        Tuple of (level, source_header).
+        Tuple of (budget, source_header). Budget is 0 for off, None if absent.
     """
 
     candidates = (
-        ("x-thinking-mode", _normalize_anthropic_level),
-        ("x-reasoning-effort", _normalize_anthropic_level),
+        ("x-thinking-mode", _effort_to_budget_anthropic),
+        ("x-reasoning-effort", _effort_to_budget_anthropic),
     )
-    for name, parser in candidates:
+    for name, converter in candidates:
         raw = headers.get(name)
         if raw is None:
             continue
-        level = parser(raw)
-        if level:
-            return level, name
+        budget = converter(raw)
+        if budget is not None:
+            return budget, name
         _warn_invalid(name, raw)
     return None, None
+
+
+# ---------------------------------------------------------------------------
+# Helper to build ThinkingPolicy from a resolved numeric budget
+# ---------------------------------------------------------------------------
+
+
+def _policy_from_budget(budget: int, source: str) -> ThinkingPolicy:
+    """Build a ThinkingPolicy from a resolved numeric budget.
+
+    Args:
+        budget: Token budget. 0 means off, >0 means enabled.
+        source: Diagnostic source label.
+
+    Returns:
+        Resolved ThinkingPolicy.
+    """
+
+    if budget <= 0:
+        return ThinkingPolicy(False, None, source)
+    return ThinkingPolicy(True, _clamp_budget(budget), source)
+
+
+# ---------------------------------------------------------------------------
+# Public resolvers
+# ---------------------------------------------------------------------------
 
 
 def resolve_openai_policy(
@@ -413,7 +488,7 @@ def resolve_openai_policy(
 
     Precedence:
     1. Explicit numeric budget from request body
-    2. Effort value from request body
+    2. Effort value from request body (converted to numeric budget)
     3. Header fallback hints
     4. FAKE_REASONING_* defaults
 
@@ -425,55 +500,34 @@ def resolve_openai_policy(
         Resolved thinking policy.
     """
 
+    # 1. Body numeric budget (highest priority)
     body_budget = _parse_body_budget_openai(request_data)
     if body_budget is not None:
         if body_budget < 0:
             _warn_invalid("body_budget", body_budget)
-        elif body_budget == 0:
-            return ThinkingPolicy(False, None, "off", "body_budget")
         else:
-            return ThinkingPolicy(
-                True, _clamp_budget(body_budget), "budget", "body_budget"
-            )
+            return _policy_from_budget(body_budget, "body_budget")
 
-    body_effort = _parse_body_effort_openai(request_data)
-    if body_effort:
-        if body_effort == "off":
-            return ThinkingPolicy(False, None, "off", "body_effort")
-        if body_effort == "minimal":
-            return ThinkingPolicy(
-                True, THINKING_OPENAI_MINIMAL_TOKENS, "low", "body_effort"
-            )
-        mapped = _openai_budget_for_level(body_effort)
-        if mapped is not None:
-            return ThinkingPolicy(True, mapped, body_effort, "body_effort")
+    # 2. Body effort string -> numeric budget
+    body_effort_budget = _parse_body_effort_openai(request_data)
+    if body_effort_budget is not None:
+        return _policy_from_budget(body_effort_budget, "body_effort")
 
+    # 3. Header fallbacks
     normalized_headers = _normalize_headers(headers)
 
     header_budget, budget_header = _parse_header_budget(normalized_headers)
     if header_budget is not None:
         if header_budget < 0:
             _warn_invalid(budget_header or "x-thinking-budget", header_budget)
-        elif header_budget == 0:
-            return ThinkingPolicy(False, None, "off", "header_budget")
         else:
-            return ThinkingPolicy(
-                True, _clamp_budget(header_budget), "budget", "header_budget"
-            )
+            return _policy_from_budget(header_budget, "header_budget")
 
-    header_level, level_header = _parse_header_level_openai(normalized_headers)
-    if header_level:
-        if header_level == "off":
-            return ThinkingPolicy(False, None, "off", "header_effort")
-        if header_level == "minimal":
-            return ThinkingPolicy(
-                True, THINKING_OPENAI_MINIMAL_TOKENS, "low", "header_effort"
-            )
-        mapped = _openai_budget_for_level(header_level)
-        if mapped is not None:
-            return ThinkingPolicy(True, mapped, header_level, "header_effort")
-        _warn_invalid(level_header or "header_effort", header_level)
+    header_effort_budget, _ = _parse_header_effort_openai(normalized_headers)
+    if header_effort_budget is not None:
+        return _policy_from_budget(header_effort_budget, "header_effort")
 
+    # 4. Default
     return _default_policy()
 
 
@@ -484,7 +538,7 @@ def resolve_anthropic_policy(
 
     Precedence:
     1. Explicit numeric budget from request body
-    2. Effort/mode from request body
+    2. Effort/mode from request body (converted to numeric budget)
     3. Header fallback hints
     4. FAKE_REASONING_* defaults
 
@@ -496,52 +550,32 @@ def resolve_anthropic_policy(
         Resolved thinking policy.
     """
 
+    # 1. Body numeric budget (highest priority)
     body_budget = _parse_body_budget_anthropic(request_data)
     if body_budget is not None:
         if body_budget < 0:
             _warn_invalid("thinking.budget_tokens", body_budget)
-        elif body_budget == 0:
-            return ThinkingPolicy(False, None, "off", "body_budget")
         else:
-            return ThinkingPolicy(
-                True, _clamp_budget(body_budget), "budget", "body_budget"
-            )
+            return _policy_from_budget(body_budget, "body_budget")
 
-    body_effort = _parse_body_effort_anthropic(request_data)
-    if body_effort:
-        if body_effort == "off":
-            return ThinkingPolicy(False, None, "off", "body_effort")
-        if body_effort == "max":
-            return ThinkingPolicy(
-                True, THINKING_ANTHROPIC_MAX_TOKENS, "max", "body_effort"
-            )
-        return ThinkingPolicy(
-            True, THINKING_ANTHROPIC_HIGH_TOKENS, "high", "body_effort"
-        )
+    # 2. Body effort/mode -> numeric budget
+    body_effort_budget = _parse_body_effort_anthropic(request_data)
+    if body_effort_budget is not None:
+        return _policy_from_budget(body_effort_budget, "body_effort")
 
+    # 3. Header fallbacks
     normalized_headers = _normalize_headers(headers)
 
     header_budget, budget_header = _parse_header_budget(normalized_headers)
     if header_budget is not None:
         if header_budget < 0:
             _warn_invalid(budget_header or "x-thinking-budget", header_budget)
-        elif header_budget == 0:
-            return ThinkingPolicy(False, None, "off", "header_budget")
         else:
-            return ThinkingPolicy(
-                True, _clamp_budget(header_budget), "budget", "header_budget"
-            )
+            return _policy_from_budget(header_budget, "header_budget")
 
-    header_level, _ = _parse_header_level_anthropic(normalized_headers)
-    if header_level:
-        if header_level == "off":
-            return ThinkingPolicy(False, None, "off", "header_effort")
-        if header_level == "max":
-            return ThinkingPolicy(
-                True, THINKING_ANTHROPIC_MAX_TOKENS, "max", "header_effort"
-            )
-        return ThinkingPolicy(
-            True, THINKING_ANTHROPIC_HIGH_TOKENS, "high", "header_effort"
-        )
+    header_effort_budget, _ = _parse_header_effort_anthropic(normalized_headers)
+    if header_effort_budget is not None:
+        return _policy_from_budget(header_effort_budget, "header_effort")
 
+    # 4. Default
     return _default_policy()

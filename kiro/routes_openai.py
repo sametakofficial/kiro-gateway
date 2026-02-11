@@ -54,6 +54,10 @@ from kiro.streaming_openai import (
 )
 from kiro.thinking_policy import resolve_openai_policy
 from kiro.http_client import KiroHttpClient
+from kiro.reactive_retry import (
+    read_response_error_text,
+    retry_on_improperly_formed_request,
+)
 from kiro.utils import generate_conversation_id
 
 # Import debug_logger
@@ -268,7 +272,11 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
             headers=request.headers,
         )
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        logger.warning(f"Payload conversion validation failed: {e}")
+        raise HTTPException(
+            status_code=400,
+            detail="Request could not be processed. Please retry.",
+        )
 
     # Log Kiro payload
     try:
@@ -303,50 +311,75 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
         )
 
         if response.status_code != 200:
-            try:
-                error_content = await response.aread()
-            except Exception:
-                error_content = b"Unknown error"
+            error_text = await read_response_error_text(response)
 
-            await http_client.close()
-            error_text = error_content.decode("utf-8", errors="replace")
-
-            # Try to parse JSON response from Kiro to extract error message
-            error_message = error_text
-            try:
-                error_json = json.loads(error_text)
-                # Enhance Kiro API errors with user-friendly messages
-                from kiro.kiro_errors import enhance_kiro_error
-
-                error_info = enhance_kiro_error(error_json)
-                error_message = error_info.user_message
-                # Log original error for debugging
-                logger.debug(
-                    f"Original Kiro error: {error_info.original_message} (reason: {error_info.reason})"
+            def _rebuild_payload_for_retry() -> dict:
+                return build_kiro_payload(
+                    request_data,
+                    generate_conversation_id(),
+                    profile_arn_for_payload,
+                    headers=request.headers,
                 )
-            except (json.JSONDecodeError, KeyError):
-                pass
 
-            # Log access log for error (before flush, so it gets into app_logs)
-            logger.warning(
-                f"HTTP {response.status_code} - POST /v1/chat/completions - {error_message[:100]}"
+            def _create_retry_http_client() -> KiroHttpClient:
+                if request_data.stream:
+                    return KiroHttpClient(auth_manager, shared_client=None)
+                return KiroHttpClient(
+                    auth_manager,
+                    shared_client=request.app.state.http_client,
+                )
+
+            retry_result = await retry_on_improperly_formed_request(
+                response=response,
+                error_text=error_text,
+                http_client=http_client,
+                request_url=url,
+                rebuild_payload=_rebuild_payload_for_retry,
+                new_http_client_factory=_create_retry_http_client,
             )
+            response = retry_result.response
+            http_client = retry_result.http_client
+            error_text = retry_result.error_text
 
-            # Flush debug logs on error ("errors" mode)
-            if debug_logger:
-                debug_logger.flush_on_error(response.status_code, error_message)
+            if response.status_code != 200:
+                await http_client.close()
 
-            # Return error in OpenAI API format
-            return JSONResponse(
-                status_code=response.status_code,
-                content={
-                    "error": {
-                        "message": error_message,
-                        "type": "kiro_api_error",
-                        "code": response.status_code,
-                    }
-                },
-            )
+                # Try to parse JSON response from Kiro to extract error message
+                error_message = error_text
+                try:
+                    error_json = json.loads(error_text)
+                    # Enhance Kiro API errors with user-friendly messages
+                    from kiro.kiro_errors import enhance_kiro_error
+
+                    error_info = enhance_kiro_error(error_json)
+                    error_message = error_info.user_message
+                    # Log original error for debugging
+                    logger.debug(
+                        f"Original Kiro error: {error_info.original_message} (reason: {error_info.reason})"
+                    )
+                except (json.JSONDecodeError, KeyError):
+                    pass
+
+                # Log access log for error (before flush, so it gets into app_logs)
+                logger.warning(
+                    f"HTTP {response.status_code} - POST /v1/chat/completions - {error_message[:100]}"
+                )
+
+                # Flush debug logs on error ("errors" mode)
+                if debug_logger:
+                    debug_logger.flush_on_error(response.status_code, error_message)
+
+                # Return error in OpenAI API format
+                return JSONResponse(
+                    status_code=response.status_code,
+                    content={
+                        "error": {
+                            "message": error_message,
+                            "type": "kiro_api_error",
+                            "code": response.status_code,
+                        }
+                    },
+                )
 
         # Prepare data for fallback token counting
         # Convert Pydantic models to dicts for tokenizer

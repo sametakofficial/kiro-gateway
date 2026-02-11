@@ -34,7 +34,10 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import APIKeyHeader
 from loguru import logger
 
-from kiro.config import PROXY_API_KEY, PROXY_API_KEY_ALIASES
+from kiro.config import (
+    PROXY_API_KEY,
+    PROXY_API_KEY_ALIASES,
+)
 from kiro.models_anthropic import (
     AnthropicMessagesRequest,
     AnthropicMessagesResponse,
@@ -50,6 +53,10 @@ from kiro.streaming_anthropic import (
 )
 from kiro.thinking_policy import resolve_anthropic_policy
 from kiro.http_client import KiroHttpClient
+from kiro.reactive_retry import (
+    read_response_error_text,
+    retry_on_improperly_formed_request,
+)
 from kiro.utils import generate_conversation_id
 from kiro.tokenizer import count_tools_tokens
 
@@ -307,7 +314,10 @@ async def messages(
             status_code=400,
             content={
                 "type": "error",
-                "error": {"type": "invalid_request_error", "message": str(e)},
+                "error": {
+                    "type": "invalid_request_error",
+                    "message": "Request could not be processed. Please retry.",
+                },
             },
         )
 
@@ -354,47 +364,72 @@ async def messages(
         )
 
         if response.status_code != 200:
-            try:
-                error_content = await response.aread()
-            except Exception:
-                error_content = b"Unknown error"
+            error_text = await read_response_error_text(response)
 
-            await http_client.close()
-            error_text = error_content.decode("utf-8", errors="replace")
-
-            # Try to parse JSON response from Kiro to extract error message
-            error_message = error_text
-            try:
-                error_json = json.loads(error_text)
-                # Enhance Kiro API errors with user-friendly messages
-                from kiro.kiro_errors import enhance_kiro_error
-
-                error_info = enhance_kiro_error(error_json)
-                error_message = error_info.user_message
-                # Log original error for debugging
-                logger.debug(
-                    f"Original Kiro error: {error_info.original_message} (reason: {error_info.reason})"
+            def _rebuild_payload_for_retry() -> dict:
+                return anthropic_to_kiro(
+                    request_data,
+                    generate_conversation_id(),
+                    profile_arn_for_payload,
+                    headers=request.headers,
                 )
-            except (json.JSONDecodeError, KeyError):
-                pass
 
-            # Log access log for error (before flush, so it gets into app_logs)
-            logger.warning(
-                f"HTTP {response.status_code} - POST /v1/messages - {error_message[:100]}"
+            def _create_retry_http_client() -> KiroHttpClient:
+                if request_data.stream:
+                    return KiroHttpClient(auth_manager, shared_client=None)
+                return KiroHttpClient(
+                    auth_manager,
+                    shared_client=request.app.state.http_client,
+                )
+
+            retry_result = await retry_on_improperly_formed_request(
+                response=response,
+                error_text=error_text,
+                http_client=http_client,
+                request_url=url,
+                rebuild_payload=_rebuild_payload_for_retry,
+                new_http_client_factory=_create_retry_http_client,
             )
+            response = retry_result.response
+            http_client = retry_result.http_client
+            error_text = retry_result.error_text
 
-            # Flush debug logs on error
-            if debug_logger:
-                debug_logger.flush_on_error(response.status_code, error_message)
+            if response.status_code != 200:
+                await http_client.close()
 
-            # Return error in Anthropic format
-            return JSONResponse(
-                status_code=response.status_code,
-                content={
-                    "type": "error",
-                    "error": {"type": "api_error", "message": error_message},
-                },
-            )
+                # Try to parse JSON response from Kiro to extract error message
+                error_message = error_text
+                try:
+                    error_json = json.loads(error_text)
+                    # Enhance Kiro API errors with user-friendly messages
+                    from kiro.kiro_errors import enhance_kiro_error
+
+                    error_info = enhance_kiro_error(error_json)
+                    error_message = error_info.user_message
+                    # Log original error for debugging
+                    logger.debug(
+                        f"Original Kiro error: {error_info.original_message} (reason: {error_info.reason})"
+                    )
+                except (json.JSONDecodeError, KeyError):
+                    pass
+
+                # Log access log for error (before flush, so it gets into app_logs)
+                logger.warning(
+                    f"HTTP {response.status_code} - POST /v1/messages - {error_message[:100]}"
+                )
+
+                # Flush debug logs on error
+                if debug_logger:
+                    debug_logger.flush_on_error(response.status_code, error_message)
+
+                # Return error in Anthropic format
+                return JSONResponse(
+                    status_code=response.status_code,
+                    content={
+                        "type": "error",
+                        "error": {"type": "api_error", "message": error_message},
+                    },
+                )
 
         if request_data.stream:
             # Streaming mode - Kiro already returned 200, now stream the response

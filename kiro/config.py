@@ -97,7 +97,8 @@ SERVER_PORT: int = int(os.getenv("SERVER_PORT", str(DEFAULT_SERVER_PORT)))
 # ==================================================================================================
 
 # API key for proxy access (clients must pass it in Authorization header)
-PROXY_API_KEY: str = os.getenv("PROXY_API_KEY", "my-super-secret-password-123")
+DEFAULT_PROXY_API_KEY: str = "my-super-secret-password-123"
+PROXY_API_KEY: str = os.getenv("PROXY_API_KEY", DEFAULT_PROXY_API_KEY)
 
 # Optional additional API keys accepted by the gateway (comma-separated).
 # Useful for client migration while keeping one primary key.
@@ -156,8 +157,10 @@ REGION: str = os.getenv("KIRO_REGION", "us-east-1")
 _raw_creds_file = _get_raw_env_value("KIRO_CREDS_FILE") or os.getenv(
     "KIRO_CREDS_FILE", ""
 )
-# Normalize path for cross-platform compatibility
-KIRO_CREDS_FILE: str = str(Path(_raw_creds_file)) if _raw_creds_file else ""
+# Normalize path for cross-platform compatibility and expand user home
+KIRO_CREDS_FILE: str = (
+    str(Path(_raw_creds_file).expanduser()) if _raw_creds_file else ""
+)
 
 # Path to kiro-cli SQLite database (optional, for AWS SSO OIDC authentication)
 # Default location: ~/.local/share/kiro-cli/data.sqlite3 (Linux/macOS)
@@ -165,7 +168,9 @@ KIRO_CREDS_FILE: str = str(Path(_raw_creds_file)) if _raw_creds_file else ""
 _raw_cli_db_file = _get_raw_env_value("KIRO_CLI_DB_FILE") or os.getenv(
     "KIRO_CLI_DB_FILE", ""
 )
-KIRO_CLI_DB_FILE: str = str(Path(_raw_cli_db_file)) if _raw_cli_db_file else ""
+KIRO_CLI_DB_FILE: str = (
+    str(Path(_raw_cli_db_file).expanduser()) if _raw_cli_db_file else ""
+)
 
 # ==================================================================================================
 # Kiro API URL Templates
@@ -322,6 +327,199 @@ TOOL_DESCRIPTION_MAX_LENGTH: int = int(
 )
 
 # ==================================================================================================
+# Tool Result Size Guard (Oversized Tool Output Protection)
+# ==================================================================================================
+
+# Kiro API can return vague 400 "Improperly formed request" errors for oversized payloads.
+# In practice this is often caused by very large tool_result blocks (logs, crash dumps, schemas).
+#
+# This guard rejects oversized tool outputs with a clear error message, following the
+# industry standard approach (OpenAI uses 512KB hard limit with reject).
+#
+# When a tool output exceeds the limit, the AI receives a clear error message instructing
+# it to use alternative methods (head/tail/grep) to reduce output size. This is the
+# correct approach because:
+# - Gateway should not modify content (that's the AI/client's responsibility)
+# - AI can make informed decisions about what data to keep
+# - Truncation by gateway would cause unpredictable AI behavior
+#
+# Enabled by default to proactively prevent vague upstream
+# "Improperly formed request" errors from oversized tool payloads.
+# Disable if you want stricter transparent-proxy behavior.
+_TOOL_RESULT_GUARD_RAW: str = os.getenv("TOOL_RESULT_GUARD_ENABLED", "true").lower()
+TOOL_RESULT_GUARD_ENABLED: bool = _TOOL_RESULT_GUARD_RAW in (
+    "true",
+    "1",
+    "yes",
+    "enabled",
+    "on",
+)
+
+# Max characters for a single tool_result block.
+# Conservative default to proactively prevent upstream 400 validation failures.
+TOOL_RESULT_MAX_CHARS: int = int(os.getenv("TOOL_RESULT_MAX_CHARS", "50000"))
+
+# Max total characters for all tool_result blocks in one request.
+# Conservative default to reduce risk of vague upstream "Improperly formed request" errors.
+TOOL_RESULT_TOTAL_MAX_CHARS: int = int(
+    os.getenv("TOOL_RESULT_TOTAL_MAX_CHARS", "200000")
+)
+
+# Guard oversized tool call arguments (function.arguments / tool_use.input).
+# This prevents vague upstream 400 errors when clients send very large arguments.
+_TOOL_CALL_ARGS_GUARD_RAW: str = os.getenv(
+    "TOOL_CALL_ARGS_GUARD_ENABLED", "true"
+).lower()
+TOOL_CALL_ARGS_GUARD_ENABLED: bool = _TOOL_CALL_ARGS_GUARD_RAW in (
+    "true",
+    "1",
+    "yes",
+    "enabled",
+    "on",
+)
+
+# Max characters allowed in a single tool call arguments payload.
+TOOL_CALL_ARGS_MAX_CHARS: int = int(os.getenv("TOOL_CALL_ARGS_MAX_CHARS", "50000"))
+
+# ==================================================================================================
+# Queued Announce Guard (OpenClaw busy-queue payload protection)
+# ==================================================================================================
+
+# OpenClaw can enqueue large "Queued announce messages while agent was busy" payloads.
+# These are infrastructure/system notices (not direct user-authored prompts) and may contain
+# full subagent reports. Very large queued notices can trigger vague upstream
+# 400 "Improperly formed request" errors.
+#
+# This guard compacts ONLY those queued-announce notice blocks when they exceed threshold.
+# It preserves a head/tail preview and inserts a transparent gateway notice.
+# Regular user messages are never touched by this guard.
+#
+# Sizing rationale (aligned with Kiro API limits):
+#   - Kiro API context window: ~200K tokens (~800K chars)
+#   - Tool result guard: 50K per tool, 200K total — proven safe
+#   - Previous default (1800 chars / ~450 tokens) was too aggressive:
+#     a typical sub-agent report is 3K-15K chars, so the old limit
+#     destroyed most of the useful content.
+#   - New default (12000 chars / ~3000 tokens) preserves a medium-sized
+#     sub-agent report intact. Even 5 queued announces at 12K each = 60K chars,
+#     which is ~7.5% of the context window — well within safe bounds.
+_QUEUED_ANNOUNCE_GUARD_RAW: str = os.getenv(
+    "QUEUED_ANNOUNCE_GUARD_ENABLED", "true"
+).lower()
+QUEUED_ANNOUNCE_GUARD_ENABLED: bool = _QUEUED_ANNOUNCE_GUARD_RAW in (
+    "true",
+    "1",
+    "yes",
+    "enabled",
+    "on",
+)
+
+# Maximum total chars for a single queued announce text block before compaction.
+QUEUED_ANNOUNCE_MAX_CHARS: int = int(os.getenv("QUEUED_ANNOUNCE_MAX_CHARS", "12000"))
+
+# Number of chars to keep from the start/end when compaction is applied.
+QUEUED_ANNOUNCE_HEAD_CHARS: int = int(os.getenv("QUEUED_ANNOUNCE_HEAD_CHARS", "6000"))
+QUEUED_ANNOUNCE_TAIL_CHARS: int = int(os.getenv("QUEUED_ANNOUNCE_TAIL_CHARS", "4000"))
+
+# ==================================================================================================
+# Middleware Pipeline Settings
+# ==================================================================================================
+
+# Tool Pairing Validator: fixes orphaned tool_use/tool_result blocks.
+# Enabled by default to repair malformed tool-use/tool-result flows that would
+# otherwise fail with vague upstream 400 validation errors.
+# Disable if you want stricter transparent-proxy behavior.
+# Default: true
+_TOOL_PAIRING_VALIDATOR_RAW: str = os.getenv(
+    "TOOL_PAIRING_VALIDATOR_ENABLED", "true"
+).lower()
+TOOL_PAIRING_VALIDATOR_ENABLED: bool = _TOOL_PAIRING_VALIDATOR_RAW in (
+    "true",
+    "1",
+    "yes",
+    "enabled",
+    "on",
+)
+
+# Message Structure Validator: fixes role alternation, empty content, first-message role.
+# Enabled by default to normalize malformed role/content structures that can
+# trigger vague upstream 400 errors.
+# Disable if you want stricter transparent-proxy behavior.
+# Default: true
+_MESSAGE_STRUCTURE_VALIDATOR_RAW: str = os.getenv(
+    "MESSAGE_STRUCTURE_VALIDATOR_ENABLED", "true"
+).lower()
+MESSAGE_STRUCTURE_VALIDATOR_ENABLED: bool = _MESSAGE_STRUCTURE_VALIDATOR_RAW in (
+    "true",
+    "1",
+    "yes",
+    "enabled",
+    "on",
+)
+
+# Reactive Retry: when upstream returns 400 "Improperly formed request",
+# automatically sanitize the message array and retry once.
+# Default: true
+_REACTIVE_RETRY_RAW: str = os.getenv("REACTIVE_RETRY_ENABLED", "true").lower()
+REACTIVE_RETRY_ENABLED: bool = _REACTIVE_RETRY_RAW in (
+    "true",
+    "1",
+    "yes",
+    "enabled",
+    "on",
+)
+
+# Maximum number of automatic retries on 400 errors before giving up.
+REACTIVE_RETRY_MAX_ATTEMPTS: int = int(os.getenv("REACTIVE_RETRY_MAX_ATTEMPTS", "1"))
+
+# Kiro request payload limit guard (bytes, not characters).
+# Reverse-engineered upstream behavior (Issue #73 comments): failures can start
+# around ~615KB payload size. Use safer headroom by default.
+#
+# New key: KIRO_MAX_PAYLOAD_BYTES
+# Backward compatibility: if KIRO_MAX_PAYLOAD_BYTES is not set, we read legacy
+# KIRO_MAX_PAYLOAD_CHARS and interpret it as bytes.
+_KIRO_MAX_PAYLOAD_DEFAULT: str = "590000"
+_KIRO_MAX_PAYLOAD_BYTES_RAW: str = os.getenv(
+    "KIRO_MAX_PAYLOAD_BYTES",
+    os.getenv("KIRO_MAX_PAYLOAD_CHARS", _KIRO_MAX_PAYLOAD_DEFAULT),
+)
+KIRO_MAX_PAYLOAD_BYTES: int = int(_KIRO_MAX_PAYLOAD_BYTES_RAW)
+
+# Backward-compatible alias (deprecated): kept for integrations that import this name.
+KIRO_MAX_PAYLOAD_CHARS: int = KIRO_MAX_PAYLOAD_BYTES
+
+# Optional hard cap for Kiro history entries after conversion.
+# Default 0 = disabled (preserve context unless payload-size guard needs trimming).
+KIRO_MAX_HISTORY_ENTRIES: int = int(os.getenv("KIRO_MAX_HISTORY_ENTRIES", "0"))
+
+# ==================================================================================================
+# Authentication Mode
+# ==================================================================================================
+
+# When true, skip upstream bearer token auth and forward requests without Authorization header.
+# Intended for setups where upstream proxy handles auth/model access independently.
+_SKIP_AUTH_RAW: str = os.getenv("SKIP_AUTH", "false").lower()
+SKIP_AUTH: bool = _SKIP_AUTH_RAW in (
+    "true",
+    "1",
+    "yes",
+    "enabled",
+    "on",
+)
+
+# Explicit acknowledgement for SKIP_AUTH. This prevents accidental production
+# enablement where upstream Authorization is silently dropped.
+_SKIP_AUTH_ACKNOWLEDGED_RAW: str = os.getenv("SKIP_AUTH_ACKNOWLEDGED", "false").lower()
+SKIP_AUTH_ACKNOWLEDGED: bool = _SKIP_AUTH_ACKNOWLEDGED_RAW in (
+    "true",
+    "1",
+    "yes",
+    "enabled",
+    "on",
+)
+
+# ==================================================================================================
 # Truncation Recovery Settings
 # ==================================================================================================
 
@@ -467,6 +665,12 @@ THINKING_OPENAI_XHIGH_TOKENS: int = int(
     os.getenv("THINKING_OPENAI_XHIGH_TOKENS", "4000")
 )
 
+THINKING_ANTHROPIC_LOW_TOKENS: int = int(
+    os.getenv("THINKING_ANTHROPIC_LOW_TOKENS", "600")
+)
+THINKING_ANTHROPIC_MEDIUM_TOKENS: int = int(
+    os.getenv("THINKING_ANTHROPIC_MEDIUM_TOKENS", "1800")
+)
 THINKING_ANTHROPIC_HIGH_TOKENS: int = int(
     os.getenv("THINKING_ANTHROPIC_HIGH_TOKENS", "3000")
 )

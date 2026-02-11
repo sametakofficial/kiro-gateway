@@ -30,18 +30,18 @@
 
 Canonical docs introduced in this audit package:
 
-- `FORK_CHANGELOG.md`
-- `ARCHITECTURE_AUDIT.md`
-- `SECURITY_REVIEW.md`
-- `PR_REVIEW_SUMMARY.md`
+- `fork-docs/FORK_CHANGELOG.md`
+- `fork-docs/ARCHITECTURE_AUDIT.md`
+- `fork-docs/SECURITY_REVIEW.md`
+- `fork-docs/PR_REVIEW_SUMMARY.md`
 
 Merged/superseded docs and rationale:
 
-1. `CHANGES_CONTEXT_FULL.md` -> merged into the canonical audit package.
+1. `fork-docs/CHANGES_CONTEXT_FULL.md` -> merged into the canonical audit package.
    - Rationale: handoff narrative duplicated architecture/security details now covered centrally.
-2. `docs/HANDOFF_THINKING_POLICY_MIGRATION.md` -> merged into canonical docs.
+2. `fork-docs/HANDOFF_THINKING_POLICY_MIGRATION.md` -> merged into canonical docs.
    - Rationale: migration behavior is now reflected by implemented code and test-backed audit notes.
-3. `PROMPT_KIRO_GATEWAY_DEEP_AUDIT_TR.md` -> superseded as execution prompt artifact.
+3. `fork-docs/PROMPT_KIRO_GATEWAY_DEEP_AUDIT_TR.md` -> superseded as execution prompt artifact.
    - Rationale: prompt text is process metadata, not stable project documentation.
 
 Recommended action: keep superseded files only as historical references, marked deprecated.

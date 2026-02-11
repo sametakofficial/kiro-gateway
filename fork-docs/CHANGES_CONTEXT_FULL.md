@@ -1,6 +1,6 @@
 # Kiro Gateway Migration Context (Full)
 
-> Superseded by canonical docs: `FORK_CHANGELOG.md`, `ARCHITECTURE_AUDIT.md`, `SECURITY_REVIEW.md`, `PR_REVIEW_SUMMARY.md`.
+> Superseded by canonical docs: `fork-docs/FORK_CHANGELOG.md`, `fork-docs/ARCHITECTURE_AUDIT.md`, `fork-docs/SECURITY_REVIEW.md`, `fork-docs/PR_REVIEW_SUMMARY.md`.
 > Kept only as historical handoff context.
 
 This file is a full handoff/context document for continuing work on thinking policy migration, Anthropic/OpenCode compatibility, and auth behavior.

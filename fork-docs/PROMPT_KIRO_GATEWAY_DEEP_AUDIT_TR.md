@@ -1,4 +1,4 @@
-> Superseded by canonical docs: `FORK_CHANGELOG.md`, `ARCHITECTURE_AUDIT.md`, `SECURITY_REVIEW.md`, `PR_REVIEW_SUMMARY.md`.
+> Superseded by canonical docs: `fork-docs/FORK_CHANGELOG.md`, `fork-docs/ARCHITECTURE_AUDIT.md`, `fork-docs/SECURITY_REVIEW.md`, `fork-docs/PR_REVIEW_SUMMARY.md`.
 > This file is a historical execution prompt, not a maintained project document.
 
 Sen kıdemli bir Staff/Principal Software Engineer + Systems Architect + Reliability Engineer gibi davranacaksın.

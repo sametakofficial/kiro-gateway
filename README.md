@@ -15,7 +15,7 @@ This fork focuses on practical compatibility and controllability improvements:
 - Expanded streaming/retry/error handling stability for real-world clients
 - Large unit-test expansion for compatibility regressions and edge cases
 
-Full fork diff and rationale: [`FORK_CHANGELOG.md`](FORK_CHANGELOG.md)
+Full fork diff and rationale: [`FORK_CHANGELOG.md`](fork-docs/FORK_CHANGELOG.md)
 
 [🇷🇺 Русский](docs/ru/README.md) • [🇨🇳 中文](docs/zh/README.md) • [🇪🇸 Español](docs/es/README.md) • [🇮🇩 Indonesia](docs/id/README.md) • [🇧🇷 Português](docs/pt/README.md) • [🇯🇵 日本語](docs/ja/README.md) • [🇰🇷 한국어](docs/ko/README.md)
 
